@@ -1,367 +1,188 @@
-# PostgreSQL 数据结构（草案）
+# PostgreSQL 数据结构
 
-> 版本 v0.1 · 2026-11-12 · 状态：**draft，待 TASK-003 冻结**
-> 维护者：`architect`（唯一写入者）｜ 会签：`graph-eng`、`qa-audit`、`data-eng`
+> 版本 **v1.0** · 2026-11-13 · 状态：**frozen**
+> 权威 DDL：`database/migrations/versions/bdaf9a0511cb_init_schema.py`（已实际执行）
+> 本文解释设计意图与约束理由；两者不一致时以迁移文件为准，并立即修正本文。
+> 维护者：`architect`（唯一写入者）
 
 ---
 
 ## 一、设计原则
 
-1. **PG 是唯一事实源。** 图库、缓存、前端状态都是派生。
-2. **证据不可变。** `evidence` 表只插入，不更新正文；修正靠新增记录 + `supersedes_id`。
-3. **关系不物理删除。** 只有状态迁移；`relationship_history` 记录每次变化。
-4. **Claim 与 Relationship 是两张表。** 一条关系可由多个 Claim 支撑；一个 Claim 可拆成多条关系。
-5. **所有时间用 `timestamptz`**，存 UTC。
-6. **主键统一 `uuid`（UUIDv7）**，由应用生成，不用自增（跨库投影需要稳定 ID）。
+1. **PG 是唯一事实源**（ADR-0001）。Neo4j、缓存、前端状态都是派生。
+2. **证据不可变**。修正靠新增 `evidence` 行 + `supersedes_id`，不改正文。
+3. **关系不物理删除**。只做状态迁移；`relationship_history` 只追加，DB 触发器强制。
+4. **Claim 与 Relationship 是两张表**。一条关系可由多个 Claim 支撑（`claim_relationship`）。
+5. **所有时间 `timestamptz`**，存 UTC。主键统一 `uuid`（UUIDv7，应用侧生成）。
+6. **枚举用 `text + CHECK`**，不用 PG 原生 enum（原生 enum 改值需要 ALTER TYPE，迁移成本高）。
 
 ---
 
-## 二、核心表
+## 二、表目录（25 张）
 
-### 2.1 实体
-
-```sql
-CREATE TABLE entity (
-    id              uuid PRIMARY KEY,
-    entity_type     text NOT NULL,          -- 见 api-contracts.md 枚举
-    canonical_name  text NOT NULL,
-    normalized_name text NOT NULL,          -- 去空格/全半角/后缀，用于匹配
-    stock_code      text,                   -- 仅 listed_company / stock
-    exchange        text,                   -- SSE / SZSE / BSE
-    industry_code   text,                   -- 关联 industry_taxonomy
-    description     text,
-    attributes      jsonb NOT NULL DEFAULT '{}',
-    status          text NOT NULL DEFAULT 'active',  -- active / merged / deprecated
-    merged_into_id  uuid REFERENCES entity(id),      -- 合并留痕，不删除
-    created_at      timestamptz NOT NULL DEFAULT now(),
-    updated_at      timestamptz NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX ux_entity_stock_code ON entity (stock_code) WHERE stock_code IS NOT NULL;
-CREATE UNIQUE INDEX ux_entity_type_norm  ON entity (entity_type, normalized_name)
-    WHERE status = 'active' AND stock_code IS NULL;
-CREATE INDEX ix_entity_type ON entity (entity_type);
-CREATE INDEX ix_entity_name_trgm ON entity USING gin (canonical_name gin_trgm_ops);
-
-CREATE TABLE entity_alias (
-    id         uuid PRIMARY KEY,
-    entity_id  uuid NOT NULL REFERENCES entity(id),
-    alias      text NOT NULL,
-    alias_type text NOT NULL DEFAULT 'name',  -- name / former_name / abbr / english
-    source_id  uuid,                          -- 来源证据（可空）
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX ux_alias ON entity_alias (entity_id, alias);
-```
-
-**上市公司档案**（业务扩展，与 `entity` 一对一）
-
-```sql
-CREATE TABLE company_profile (
-    entity_id            uuid PRIMARY KEY REFERENCES entity(id),
-    full_name            text,
-    former_names         text[],
-    main_business        text,
-    core_products        jsonb,       -- [{name, revenue_share, mass_production}]
-    revenue_mix          jsonb,       -- [{segment, ratio, period}]
-    chain_position       text,        -- 上游 / 中游 / 下游
-    listed_at            date,
-    updated_at           timestamptz NOT NULL DEFAULT now()
-);
-```
-
-**产业分类**
-
-```sql
-CREATE TABLE industry_taxonomy (
-    code        text PRIMARY KEY,     -- 自定义编码，如 AI-COMPUTE-GPU
-    name        text NOT NULL,
-    parent_code text REFERENCES industry_taxonomy(code),
-    level       int  NOT NULL,
-    description text
-);
-```
-
-### 2.2 新闻与采集
-
-```sql
-CREATE TABLE news_raw (
-    id            uuid PRIMARY KEY,
-    source_id     text NOT NULL,
-    source_name   text NOT NULL,
-    url           text NOT NULL,
-    title         text,
-    content       text,
-    raw_payload   jsonb,                -- 原始响应快照（可截断，但保留结构）
-    published_at  timestamptz,
-    fetched_at    timestamptz NOT NULL,
-    raw_hash      text NOT NULL,        -- 全文/结构指纹
-    duplicate_of  uuid REFERENCES news_raw(id),
-    created_at    timestamptz NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX ux_news_raw_hash ON news_raw (raw_hash);
-CREATE INDEX ix_news_raw_url ON news_raw (url);
-
-CREATE TABLE news_event (
-    id                  uuid PRIMARY KEY,
-    primary_raw_id      uuid NOT NULL REFERENCES news_raw(id),
-    title               text NOT NULL,
-    summary             text,
-    event_type          text,           -- policy / earnings / capex / order / technology / ...
-    event_importance    smallint,       -- 1..5
-    verification_status text NOT NULL DEFAULT 'unverified', -- unverified/partially_verified/verified/disputed
-    published_at        timestamptz,
-    collected_at        timestamptz NOT NULL,
-    dedup_key           text NOT NULL,  -- 归一化后的事件指纹
-    attributes          jsonb NOT NULL DEFAULT '{}',
-    created_at          timestamptz NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX ux_news_event_dedup ON news_event (dedup_key);
-
-CREATE TABLE news_raw_event (           -- 转载归并：N 条 raw → 1 条 event
-    raw_id   uuid PRIMARY KEY REFERENCES news_raw(id),
-    event_id uuid NOT NULL REFERENCES news_event(id)
-);
-
-CREATE TABLE collect_run (
-    id            uuid PRIMARY KEY,
-    source_ids    text[],
-    started_at    timestamptz NOT NULL,
-    finished_at   timestamptz,
-    fetched_count int NOT NULL DEFAULT 0,
-    new_count     int NOT NULL DEFAULT 0,
-    dup_count     int NOT NULL DEFAULT 0,
-    error_count   int NOT NULL DEFAULT 0,
-    status        text NOT NULL DEFAULT 'running'   -- running/succeeded/partial/failed
-);
-
-CREATE TABLE dead_letter (
-    id          uuid PRIMARY KEY,
-    run_id      uuid REFERENCES collect_run(id),
-    source_id   text NOT NULL,
-    payload     jsonb,
-    error_type  text NOT NULL,     -- http_429 / http_5xx / parse_error / schema_drift
-    error_msg   text,
-    retry_count int NOT NULL DEFAULT 0,
-    created_at  timestamptz NOT NULL DEFAULT now()
-);
-```
-
-### 2.3 证据（不可变）
-
-```sql
-CREATE TABLE evidence (
-    id                 uuid PRIMARY KEY,
-    source_type        text NOT NULL,   -- announcement / annual_report / gov_doc / media / research
-    source_name        text NOT NULL,
-    source_url         text,
-    title              text,
-    original_excerpt   text NOT NULL,   -- 原文摘录，禁止改写
-    published_at       timestamptz,
-    collected_at       timestamptz NOT NULL,
-    evidence_grade     char(1) NOT NULL CHECK (evidence_grade IN ('A','B','C','D')),
-    verification_status text NOT NULL DEFAULT 'unverified',
-    content_hash       text NOT NULL,   -- 去重：同文转载同 hash
-    supersedes_id      uuid REFERENCES evidence(id),
-    created_at         timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX ix_evidence_hash ON evidence (content_hash);
-```
-
-> **同一 `content_hash` 的多条转载视为 1 条独立证据。** 计数时按 `DISTINCT content_hash`。
-
-### 2.4 Claim（AI 产出，可被质疑）
-
-```sql
-CREATE TABLE claim (
-    id                      uuid PRIMARY KEY,
-    subject_entity_id       uuid REFERENCES entity(id),
-    predicate               text NOT NULL,       -- relationship_type 之一，或事件型谓词
-    object_entity_id        uuid REFERENCES entity(id),
-    claim_type              text NOT NULL CHECK (claim_type IN
-                              ('fact_reported','inferred','hypothesis','disputed')),
-    confidence              numeric(4,3) NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
-    status                  text NOT NULL DEFAULT 'candidate'
-                              CHECK (status IN ('candidate','supported','refuted','disputed')),
-    source_news_event_id    uuid REFERENCES news_event(id),
-    analysis_run_id         uuid,
-    unknowns                jsonb NOT NULL DEFAULT '[]',
-    needs_human_review      jsonb NOT NULL DEFAULT '[]',
-    created_at              timestamptz NOT NULL DEFAULT now(),
-    updated_at              timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX ix_claim_status ON claim (status);
-CREATE INDEX ix_claim_subject ON claim (subject_entity_id);
-
-CREATE TABLE claim_evidence (
-    claim_id    uuid NOT NULL REFERENCES claim(id),
-    evidence_id uuid NOT NULL REFERENCES evidence(id),
-    relation    text NOT NULL CHECK (relation IN ('supporting','contradicting')),
-    PRIMARY KEY (claim_id, evidence_id, relation)
-);
-```
-
-### 2.5 关系（正式事实）
-
-```sql
-CREATE TABLE relationship (
-    id                  uuid PRIMARY KEY,
-    source_entity_id    uuid NOT NULL REFERENCES entity(id),
-    target_entity_id    uuid NOT NULL REFERENCES entity(id),
-    relationship_type   text NOT NULL,
-    status              text NOT NULL DEFAULT 'candidate'
-                          CHECK (status IN ('candidate','pending_verification','verified',
-                                            'disputed','refuted','expired','retracted')),
-    confidence          numeric(4,3) NOT NULL DEFAULT 0,
-    valid_from          timestamptz,
-    valid_to            timestamptz,
-    last_verified_at    timestamptz,
-    version             int NOT NULL DEFAULT 1,
-    derived_from_claim_ids uuid[] NOT NULL DEFAULT '{}',
-    attributes          jsonb NOT NULL DEFAULT '{}',
-    created_at          timestamptz NOT NULL DEFAULT now(),
-    updated_at          timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT ck_rel_valid_window CHECK (valid_to IS NULL OR valid_from IS NULL OR valid_to >= valid_from),
-    CONSTRAINT ck_rel_no_self CHECK (source_entity_id <> target_entity_id)
-);
-CREATE UNIQUE INDEX ux_rel_triple ON relationship (source_entity_id, relationship_type, target_entity_id)
-    WHERE status NOT IN ('refuted','retracted');
-CREATE INDEX ix_rel_status ON relationship (status);
-CREATE INDEX ix_rel_target ON relationship (target_entity_id);
-
-CREATE TABLE relationship_evidence (
-    relationship_id uuid NOT NULL REFERENCES relationship(id),
-    evidence_id     uuid NOT NULL REFERENCES evidence(id),
-    weight          numeric(4,3) NOT NULL DEFAULT 1.0,
-    PRIMARY KEY (relationship_id, evidence_id)
-);
-
-CREATE TABLE relationship_history (
-    id              uuid PRIMARY KEY,
-    relationship_id uuid NOT NULL REFERENCES relationship(id),
-    from_status     text,
-    to_status       text NOT NULL,
-    actor           text NOT NULL,        -- agent:qa-audit / human:kevin / system:projector
-    reason          text,
-    evidence_ids    uuid[] NOT NULL DEFAULT '{}',
-    snapshot        jsonb NOT NULL,       -- 迁移后的整行快照
-    created_at      timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX ix_rel_hist ON relationship_history (relationship_id, created_at DESC);
-```
-
-> `relationship_history` **只追加**。禁止 UPDATE / DELETE。审计与回滚都基于它。
-
-### 2.6 传导路径
-
-```sql
-CREATE TABLE impact_path (
-    id                 uuid PRIMARY KEY,
-    event_id           uuid NOT NULL REFERENCES news_event(id),
-    path_nodes         uuid[] NOT NULL,
-    path_relationships uuid[] NOT NULL,
-    propagation_depth  int NOT NULL,
-    impact_direction   text NOT NULL CHECK (impact_direction IN ('positive','negative','uncertain')),
-    impact_horizon     text,           -- short / medium / long
-    confidence         numeric(4,3) NOT NULL,
-    evidence_count     int NOT NULL DEFAULT 0,
-    min_evidence_grade char(1),
-    uncertain_factors  jsonb NOT NULL DEFAULT '[]',
-    truncated          boolean NOT NULL DEFAULT false,
-    algorithm_version  text NOT NULL,
-    created_at         timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX ix_impact_event ON impact_path (event_id);
-```
-
-### 2.7 质量与运行
-
-```sql
-CREATE TABLE quality_issue (
-    id             uuid PRIMARY KEY,
-    issue_type     text NOT NULL,        -- rule_id 或类别
-    severity       text NOT NULL CHECK (severity IN ('low','medium','high','critical')),
-    target_table   text NOT NULL,
-    target_id      uuid NOT NULL,
-    detected_by    text NOT NULL,        -- rule_id
-    evidence       jsonb NOT NULL,
-    suggested_fix  text,
-    status         text NOT NULL DEFAULT 'open',  -- open/acknowledged/resolved/wontfix
-    resolved_by    text,
-    resolution_note text,
-    created_at     timestamptz NOT NULL DEFAULT now(),
-    resolved_at    timestamptz
-);
-CREATE INDEX ix_qi_status ON quality_issue (status, severity);
-
-CREATE TABLE analysis_run (
-    id             uuid PRIMARY KEY,
-    news_event_id  uuid NOT NULL REFERENCES news_event(id),
-    model_provider text NOT NULL,
-    model_name     text NOT NULL,
-    prompt_version text NOT NULL,
-    input_tokens   int,
-    output_tokens  int,
-    latency_ms     int,
-    status         text NOT NULL,        -- succeeded / parse_error / failed
-    error_msg      text,
-    output_snapshot jsonb,
-    created_at     timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE graph_projection_run (
-    id            uuid PRIMARY KEY,
-    mode          text NOT NULL,         -- full / incremental
-    nodes_upserted int NOT NULL DEFAULT 0,
-    edges_upserted int NOT NULL DEFAULT 0,
-    edges_removed  int NOT NULL DEFAULT 0,
-    started_at    timestamptz NOT NULL,
-    finished_at   timestamptz,
-    status        text NOT NULL
-);
-
-CREATE TABLE app_setting (
-    key        text PRIMARY KEY,
-    value      jsonb NOT NULL,
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    updated_by text NOT NULL
-);
--- 初始：expansion.default_depth=3, expansion.max_depth=5,
---       expansion.max_nodes=300, evidence.min_grade_for_verified='C',
---       confidence.isolation_threshold=0.5
-```
-
----
-
-## 三、关键约束与不变量
-
-| # | 不变量 | 落地方式 |
+| 域 | 表 | 说明 |
 |---|---|---|
-| I-1 | 未验证关系不得进入图谱 | 投影器只读 `status IN ('verified','disputed','expired','retracted')` |
-| I-2 | `inferred` / `hypothesis` 的 Claim 不可生成 `verified` 关系 | `state_guard.py` 硬校验 + DB 触发器（可选） |
-| I-3 | 每条 `verified` 关系至少 1 条 `grade IN (A,B)` 或 ≥2 条独立 C 级证据 | `state_guard.py` |
-| I-4 | 关系不物理删除 | 撤销应用权限 + 只允许 `status` 迁移 |
-| I-5 | 证据不可变 | `evidence` 表无 UPDATE 路径，修正走 `supersedes_id` |
-| I-6 | 同一 `content_hash` 只算 1 条证据 | 证据计数视图 `v_evidence_distinct` |
-| I-7 | `valid_to >= valid_from` | CHECK 约束 |
+| 实体 | `entity` | 统一实体表，含 `entity_type`、`stock_code`、`attributes` |
+| | `entity_alias` | 别名/曾用名/英文名 |
+| | `company_profile` | 上市公司业务档案（主营、产品收入构成、产业链位置） |
+| | `industry_taxonomy` | 产业分类树（自引用 `parent_code`） |
+| 采集 | `source` | 信源 + **抓取水位** `last_fetched_at` |
+| | `news_raw` | 原始抓取记录，含 `raw_hash`、`duplicate_of` |
+| | `news_event` | 归一化事件，`dedup_key` 唯一 |
+| | `news_raw_event` | N 条转载 → 1 条事件 |
+| | `collect_run` | 一次采集的汇总 |
+| | `collect_run_source` | **per-source 明细**（一行汇总看不出哪个源坏了） |
+| | `dead_letter` | 失败条目 + `http_status` + `next_retry_at` |
+| 证据 | `evidence` | 不可变证据，`content_hash` 用于转载去重 |
+| 主张 | `claim` | AI 产出的主张，含 `object_text` 字面量对象 |
+| | `claim_evidence` | 主张↔证据（supporting / contradicting） |
+| | `entity_mention` | 实体提及位置（实体合并后可回溯重链） |
+| | `claim_relationship` | 主张↔关系（替代无外键的 `uuid[]`） |
+| 关系 | `relationship` | 正式关系，7 态状态机 |
+| | `relationship_evidence` | 关系↔证据 + `weight` |
+| | `relationship_history` | **只追加**的状态迁移审计 |
+| 传导 | `impact_path` | 事件影响路径，含 `status`（valid / invalidated / stale） |
+| 运维 | `quality_issue` | 质检问题 |
+| | `analysis_run` | 每次 LLM 分析的 token/耗时/状态 |
+| | `graph_projection_run` | 每次投影统计 |
+| | `idempotency_key` | `Idempotency-Key` 落库，否则该请求头只是装饰 |
+| | `app_setting` | 可调参数（扩展深度、阈值等），迁移时已种入 7 项 |
 
 ---
 
-## 四、索引与性能预算
+## 三、关键约束（有理由的才列）
+
+### 3.1 实体
+
+```sql
+-- 股票代码在「同一 entity_type 内」唯一，不是全局唯一。
+-- 全局唯一会让 :Stock 与 :ListedCompany 抢同一个代码，分列建模直接不可能。
+CREATE UNIQUE INDEX ux_entity_type_stock_code
+  ON entity (entity_type, stock_code) WHERE stock_code IS NOT NULL;
+
+-- 无股票代码的实体（产业、技术、产品）按 (类型, 归一化名) 唯一
+CREATE UNIQUE INDEX ux_entity_type_norm_name
+  ON entity (entity_type, normalized_name)
+  WHERE status = 'active' AND stock_code IS NULL;
+
+CREATE INDEX ix_entity_name_trgm ON entity USING gin (canonical_name gin_trgm_ops);
+-- 依赖扩展：CREATE EXTENSION IF NOT EXISTS pg_trgm（迁移首行执行）
+```
+
+### 3.2 采集与去重
+
+```sql
+-- 唯一键是 (source_id, url)，不是 raw_hash。
+-- 同一篇文章被 5 家媒体转载必须能存 5 条 raw，否则「转载算 1 条证据」无从计算。
+CREATE UNIQUE INDEX ux_news_raw_source_url ON news_raw (source_id, url);
+CREATE INDEX ix_news_raw_hash ON news_raw (raw_hash);   -- 普通索引，用于找同文
+```
+
+**去重三层**：
+
+| 层 | 键 | 作用 |
+|---|---|---|
+| 原始层 | `(source_id, url)` | 同一源同一链接不重复入库 |
+| 转载层 | `raw_hash`（正文指纹） | 识别同文转载，`duplicate_of` 指向首条 |
+| 事件层 | `news_event.dedup_key` | 归一化后的语义指纹，唯一 |
+
+`dedup_key` 算法（`data-eng` 实现，`architect` 定）：`sha256(normalize(title) + "|" + event_type + "|" + date(published_at))`，`normalize` 去空白、全半角、标点、HTML 标签。
+
+### 3.3 主张
+
+```sql
+-- 推断不得看起来确定
+CHECK (claim_type <> 'hypothesis' OR confidence <= 0.3)
+CHECK (claim_type <> 'inferred'   OR confidence <= 0.6)
+-- 无主语或无宾语（实体或字面量）就不是一条主张
+CHECK (subject_entity_id IS NOT NULL
+       AND (object_entity_id IS NOT NULL OR object_text IS NOT NULL))
+```
+
+### 3.4 关系
+
+```sql
+-- 一个三元组同时只能有一条「活跃」关系。
+-- rejected / revoked / expired 允许并存，因为撤销的边必须留痕，不能删。
+CREATE UNIQUE INDEX ux_relationship_active_triple
+  ON relationship (source_entity_id, relationship_type, target_entity_id)
+  WHERE status IN ('pending_review','verified','disputed');
+
+CHECK (source_entity_id <> target_entity_id)
+CHECK (valid_to IS NULL OR valid_from IS NULL OR valid_to >= valid_from)
+CHECK (confidence >= 0 AND confidence <= 1)
+```
+
+### 3.5 视图与触发器
+
+```sql
+-- I-6：同 content_hash 的多次转载算 1 条独立证据
+CREATE VIEW v_evidence_distinct AS
+SELECT content_hash,
+       (array_agg(id ORDER BY collected_at, id))[1] AS representative_id,
+       min(evidence_grade)                          AS best_grade,  -- A<B<C<D，min 即最强
+       count(*)                                     AS repost_count
+FROM evidence GROUP BY content_hash;
+
+-- I-4：历史表只追加，UPDATE/DELETE 直接抛异常
+CREATE TRIGGER trg_relationship_history_immutable
+  BEFORE UPDATE OR DELETE ON relationship_history
+  FOR EACH ROW EXECUTE FUNCTION forbid_history_mutation();
+```
+
+---
+
+## 四、不变量与强制手段（逐条对应）
+
+> 上一版的失败在于：不变量只写在文档里。现在每条都有代码或 DB 层面的落点。
+
+| # | 不变量 | 强制手段 | 测试 |
+|---|---|---|---|
+| I-1 | 未验证关系不得进入图谱 | `validation.state_guard.assert_projectable` + 投影器只读 `PROJECTABLE_STATUSES` | `test_unverified_statuses_never_project` |
+| I-2 | `inferred`/`hypothesis` 不可提升 | `PROMOTABLE_CLAIM_TYPES` + `relationship_service.transition` | `test_inferred_claim_can_never_be_promoted`、`test_inferred_claim_blocked_at_service_layer` |
+| I-3 | verified 需 A/B 或 ≥2 条独立 C | `evaluate_promotion` + `VERIFIED_MIN_C_EVIDENCE` | `test_single_grade_c_rejected_two_accepted` |
+| I-4 | 关系不物理删除；历史只追加 | DB 触发器 `trg_relationship_history_immutable` | `test_history_is_append_only` |
+| I-5 | 证据不可变 | 无 UPDATE 路径，修正走 `supersedes_id` | （约定，无自动测试） |
+| I-6 | 同文转载只算 1 条证据 | `v_evidence_distinct` + `_dedupe_by_content` | `test_reposts_do_not_count_twice`、`test_evidence_view_dedupes_reposts` |
+| I-7 | `valid_to >= valid_from` | DB CHECK `ck_relationship_valid_window` | 由 CHECK 保证 |
+| I-8 | 三元组无活跃重复 | 部分唯一索引 `ux_relationship_active_triple` | `test_duplicate_active_triple_rejected` |
+| I-9 | 无 Claim 支撑的关系不得 verified | `relationship_service.transition` 前置校验 | `test_no_claim_means_no_verification` |
+| I-10 | 推断置信度不得超上限 | Python 守卫 + DB CHECK 双份 | `test_inferred_claim_confidence_capped_in_db` |
+
+**I-5 的坦白**：证据「不可变」目前只靠代码约定，没有 DB 触发器。因为证据确实需要被 `supersedes_id` 修正，硬禁止 UPDATE 会把合法修正路径也堵死。若要强约束，应改为「禁止 UPDATE 正文列，允许 UPDATE verification_status」。**列入待办，未完成。**
+
+---
+
+## 五、索引与性能预算
 
 | 查询 | 目标 P95 | 手段 |
 |---|---|---|
-| 按股票代码查公司 | < 20ms | `ux_entity_stock_code` |
-| 公司关系列表 | < 50ms | `ix_rel_status` + 覆盖索引 |
-| 待核验关系队列 | < 50ms | 部分索引 `WHERE status='pending_verification'` |
-| 质量指标聚合 | < 500ms | 物化视图 `mv_quality_metrics`，10 分钟刷新 |
-| 事件传导路径读取 | < 100ms | `ix_impact_event` |
+| 按股票代码查公司 | < 20ms | `ux_entity_type_stock_code` |
+| 实体名模糊搜索 | < 50ms | `ix_entity_name_trgm`（GIN + pg_trgm） |
+| 公司关系列表 | < 50ms | `ix_relationship_status` + `ix_relationship_target` |
+| 待核验队列 | < 50ms | `ix_relationship_status`（`pending_review` 选择性高） |
+| 质量指标聚合 | < 500ms | 实时聚合；>10 万关系后改物化视图 |
+| 事件传导路径 | < 100ms | `ix_impact_path_event` |
 
 ---
 
-## 五、待评审项（TASK-003）
+## 六、排序与中文（已知取舍）
 
-1. `claim.predicate` 与 `relationship.relationship_type` 是否共用一套枚举？（当前倾向共用）
-2. 实体合并用 `merged_into_id` 软合并，是否需要 `entity_merge_log` 独立审计表？
-3. `news_event.dedup_key` 的算法需与 Agent 1 的正文指纹统一，谁来定？（建议 architect 定，data-eng 实现）
-4. 是否需要 `relationship` 的时间维度双表（`relationship_version`）而非 history 快照？（当前用 history 快照）
-5. `attributes jsonb` 是否会变成「什么都能塞」的垃圾桶？建议每类关系定义白名单 key。
+`POSTGRES_INITDB_ARGS="--encoding=UTF8 --locale=C"`：数据库级 collation 为 C。
+
+- **后果**：`ORDER BY name` 按字节序，中文不是拼音序；`lower()`/`upper()` 对非 ASCII 不生效。
+- **不受影响**：`pg_trgm` 的 trigram 匹配与 collation 无关，模糊搜索正常。
+- **应对**：需要中文排序时查询里显式 `COLLATE "zh-x-icu"`；名称匹配走 `normalized_name`（应用层归一化）。
+- **为什么不用 ICU 初始化**：`postgres:16-alpine` 的 ICU 数据不保证完整，换 ICU 有初始化失败风险；而 C collation 索引更快、行为确定。这是**有意识的取舍**，不是疏忽。
+
+---
+
+## 七、已验证结果（2026-11-13 实测）
+
+| 项 | 结果 |
+|---|---|
+| `alembic upgrade head` | 成功，25 张表 + 1 视图 + 1 触发器 |
+| `alembic check` | **No new upgrade operations detected**（模型与库无差异） |
+| 扩展 | `pg_trgm` 已创建 |
+| 种子设置 | `app_setting` 7 项已插入 |
+| 测试 | 51 passed（含 18 个 DB 集成测试） |

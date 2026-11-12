@@ -2,11 +2,17 @@
 
 Run locally:
     uv run uvicorn app.main:app --reload --port 8000
+
+Routing:
+    /health, /ready   unversioned probes
+    /api/v1/*         business endpoints (contract base path)
+    /openapi.json     OpenAPI 3.1
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -14,40 +20,58 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app import __version__
 from app.api import api_router
+from app.api import health as health_api
 from app.core import db, neo4j
 from app.core.config import settings
+from app.core.context import request_id_var
 from app.core.errors import AppError, ErrorCode
 from app.core.ids import uuid7_str
 from app.core.logging import configure_logging
 from app.schemas.envelope import error_body
 
 logger = logging.getLogger("fig.api")
+access_logger = logging.getLogger("fig.access")
 
 REQUEST_ID_HEADER = "X-Request-ID"
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
-    """Assigns a UUIDv7 request_id and echoes it back in the response header."""
+    """Assigns a UUIDv7 request_id, puts it in the contextvar and echoes it back."""
 
     async def dispatch(self, request: Request, call_next):
         request_id = request.headers.get(REQUEST_ID_HEADER) or uuid7_str()
         request.state.request_id = request_id
-        response = await call_next(request)
+        token = request_id_var.set(request_id)
+        started = time.perf_counter()
+        try:
+            response = await call_next(request)
+        finally:
+            request_id_var.reset(token)
+
+        duration_ms = round((time.perf_counter() - started) * 1000, 1)
         response.headers[REQUEST_ID_HEADER] = request_id
+        access_logger.info(
+            "request",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "duration_ms": duration_ms,
+            },
+        )
         return response
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
-    logger.info(
-        "api starting",
-        extra={"version": __version__, "env": settings.app_env},
-    )
+    logger.info("api starting", extra={"version": __version__, "env": settings.app_env})
     try:
         yield
     finally:
@@ -74,7 +98,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.include_router(api_router)
+    # Probes at root, business endpoints under the contract base path.
+    app.include_router(health_api.router)
     app.include_router(api_router, prefix=settings.api_base_path)
 
     @app.exception_handler(AppError)
@@ -86,6 +111,29 @@ def create_app() -> FastAPI:
                 exc.message,
                 getattr(request.state, "request_id", ""),
                 exc.details,
+            ),
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_error_handler(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        """Without this, FastAPI answers 404 with {"detail": ...} and breaks the envelope."""
+        code = {
+            401: ErrorCode.UNAUTHORIZED,
+            403: ErrorCode.FORBIDDEN,
+            404: ErrorCode.NOT_FOUND,
+            405: ErrorCode.VALIDATION_ERROR,
+            429: ErrorCode.RATE_LIMITED,
+        }.get(exc.status_code, ErrorCode.INTERNAL_ERROR)
+
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=error_body(
+                code,
+                str(exc.detail),
+                getattr(request.state, "request_id", ""),
+                {"path": request.url.path},
             ),
         )
 

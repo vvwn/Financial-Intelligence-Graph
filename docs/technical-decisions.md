@@ -55,15 +55,47 @@
 
 ---
 
+### ADR-0007 · 候选层与正式图谱双层结构（2026-11-13 决策）
+
+- **状态**：Accepted
+- **决策**：`POTENTIAL_*` 四类关系（潜在受益/受损/供应商/客户）只存在于 PostgreSQL 候选层，永不投影进 Neo4j。候选层通过 `/claims`、`/relationships?status=candidate` 暴露给前端。
+- **理由**：AI 的产业链推测若进图，会沿上下游不断扩散，最终得到一张看起来完整、实际错误的图谱。
+- **后果**：✅ 图谱只含可核验事实；⚠️ 前端要看「候选网络」需另走端点，不能复用 `/graph/*`。
+
+### ADR-0008 · PostgreSQL 为状态机唯一真源（2026-11-13 决策）
+
+- **状态**：Accepted
+- **决策**：状态变更先写 PG（含 `relationship_history`），再由投影器同步 Neo4j；不一致时以 PG 为准重建。禁止两个库同时拥有修改状态的权力。
+- **状态集合**：`candidate → pending_review → verified`，另有 `disputed / rejected / expired / revoked`。
+- **偏差**：`DISPUTED` 为决策清单外新增的第 7 态，理由见评审报告第二节。**待评审方裁决。**
+- **后果**：✅ 审计完整、可回滚；⚠️ 图有秒级延迟。
+
+### ADR-0009 · 数据库 collation 采用 C（有意识取舍）
+
+- **状态**：Accepted（待评审）
+- **背景**：`postgres:16-alpine` 的 ICU 数据不保证完整，换 ICU 有 initdb 失败风险。
+- **决策**：保持 `--locale=C`，中文排序在查询层显式 `COLLATE "zh-x-icu"`，名称匹配走应用层 `normalized_name`。
+- **后果**：✅ 索引更快、行为确定；⚠️ `ORDER BY name` 非拼音序，非 ASCII 的 `lower()` 失效。`pg_trgm` 不受影响。
+
+---
+
 ## 待决策（阻塞中）
 
 | # | 议题 | 影响任务 | 备选 | 决策人 |
 |---|---|---|---|---|
 | Q-01 | 实体消歧标准：何为「同一公司」 | TASK-101/302/401 | ①股票代码唯一 ②代码+曾用名 ③代码+业务相似度 | architect + qa-audit |
-| Q-02 | `POTENTIAL_BENEFICIARY` / `POTENTIAL_LOSER` 是否进图 | TASK-004 | ①进图（低置信标记）②不进图，仅 PG+API 组装 | architect + graph-eng |
-| Q-03 | 证据达标阈值（几条 C 级 = 1 条 B 级） | TASK-411/412 | 需真实数据校准 | architect（待 T101 数据） |
-| Q-04 | 图谱时态 `as_of` 何时做 | TASK-203/503 | ①P1 简化 ②P4 完整 | architect |
-| Q-05 | 审批人模型：单用户 vs 角色表 | TASK-412 | ①单用户 ②`actor` 角色 | architect |
+| Q-03 | 证据达标阈值（几条 C 级 = 1 条 B 级） | TASK-411/412 | 当前拍定「1×A/B 或 2×独立 C」，需真实数据校准 | architect（待 T101 数据） |
+| Q-06 | `DISPUTED` 第 7 态是否批准 | 全部关系状态逻辑 | ①保留（当前）②取消，冲突证据放 claim_evidence | **评审方** |
+| Q-07 | `locale=C` 取舍是否接受 | 中文排序与匹配 | ①保持 C（当前）②换 ICU | **评审方** |
+| Q-08 | 证据阈值是否合理 | TASK-411 | 见 Q-03 | **评审方** |
+
+### 已关闭
+
+| 议题 | 结论 |
+|---|---|
+| Q-02 `POTENTIAL_*` 是否进图 | **不进图**（ADR-0007，2026-11-13 决策） |
+| Q-04 `as_of` 时态 | v1 不做，P4 评估 |
+| Q-05 审批人模型 | P3 前单用户，`actor` 自由字符串 |
 
 ---
 

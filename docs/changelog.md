@@ -4,6 +4,72 @@
 
 ---
 
+## [0.2.0] — 2026-11-13 · 契约冻结与缺陷修复
+
+### 架构决策（评审方 2026-11-13 下达）
+
+- **决策 1**：`POTENTIAL_*` 不进正式图谱，采用「候选层 + 正式图谱」双层结构 → ADR-0007
+- **决策 2**：PostgreSQL 为状态机唯一真源，Neo4j 为投影 → ADR-0008
+- **偏差**：新增第 7 态 `DISPUTED`（决策清单外，理由见评审报告第二节，**待裁决**）
+
+### 破坏性变更（契约 v0.1 → v1.0）
+
+- 状态重命名：`pending_verification → pending_review`、`refuted → rejected`、`retracted → revoked`
+- `EntityType` 移除 `customer` / `supplier` / `competitor`（它们是关系角色，不是实体种类）
+- 图谱节点移除 `:Stock` 标签（股票是 `:ListedCompany` 的属性）
+- `as_of` 参数从 v1 移除（P4 再评估）
+- `derived_from_claim_ids uuid[]` → `claim_relationship` 关联表
+
+### 新增
+
+- 枚举：`NewsEventType`（16 值）、`ImpactPathStatus`；常量 `CANDIDATE_LAYER_RELATIONSHIP_TYPES`、`ACTIVE_TRIPLE_STATUSES`、`CONFIDENCE_CAPS`
+- 数据模型：25 张表（新增 `source`、`collect_run_source`、`entity_mention`、`claim_relationship`、`idempotency_key`）
+- 首个 Alembic 迁移 `bdaf9a0511cb`：含 `pg_trgm` 扩展、`v_evidence_distinct` 视图、`relationship_history` 只追加触发器、`app_setting` 7 项种子
+- `validation/state_guard.py`：7 态迁移矩阵、证据达标判定、层级隔离、置信度上限
+- `services/relationship_service.py`：状态迁移 + 强制 Claim 来源 + 历史追加
+- `deploy/backend.Dockerfile` + compose `full` profile（已实测容器内 `/ready` 全绿）
+- `core/context.py`：`request_id` ContextVar；日志每行带 `request_id`
+- `StarletteHTTPException` 处理器：404/405 也返回统一信封
+
+### 修复（36 条缺陷，31 已修 / 5 部分）
+
+- `news_raw` 唯一键改 `(source_id, url)`，`raw_hash` 降为普通索引（转载可入库）
+- `entity` 股票代码唯一键改 `(entity_type, stock_code)`
+- `relationship` 唯一索引改为「仅活跃三态」，`confidence` 补 CHECK
+- Neo4j `stock_code` 约束从 `:ListedCompany` 移到 `:Entity`，旧约束已 DROP
+- 投影等价性断言显式排除 `projected_at` / `projection_run_id`
+- 图谱字段映射重写：算不出的属性一律不进图
+- `/ready` 增加 Alembic 版本比对 + 并发探测 + 5s TTL 缓存
+- 测试根修正：`testpaths = ["backend/tests", "tests"]`（根 `tests/` 此前永不执行）
+- 端口绑定改 `127.0.0.1`；生产环境弱密码启动即拒
+
+### 验证结果
+
+```
+pytest backend/tests        → 51 passed
+alembic upgrade head        → 成功（25 表 + 1 视图 + 1 触发器）
+alembic check               → No new upgrade operations detected
+ruff check                  → All checks passed
+docker build                → fig-api:0.1.0 成功
+curl /ready（容器内）        → postgres/neo4j/migration 三检 ok
+```
+
+### 新增文档
+
+- `reports/development/phase0-architecture-review.md`（评审报告，36 条缺陷清单）
+- `docs/deployment.md` 更新（容器化、已验证基线）
+- `docs/technical-decisions.md` 新增 ADR-0007 / 0008 / 0009
+
+### 已知未完成
+
+- I-5（证据不可变）无列级触发器，仅代码约定
+- `predicate` 无 DB CHECK
+- `seeds/sources.yaml`、六个 fixture 目录仍空
+- 备份恢复脚本、CI 未做
+- 性能基线未测
+
+---
+
 ## [0.1.1] — 2026-11-12 · 基础设施落地（TASK-008）
 
 ### 新增

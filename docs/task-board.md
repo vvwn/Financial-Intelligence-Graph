@@ -10,10 +10,10 @@
 
 | 状态 | 数量 | 任务 |
 |---|---|---|
-| ✅ completed | 4 | TASK-001, TASK-002, TASK-008, TASK-601 |
-| 🟡 in_progress | 1 | TASK-003 |
-| 🔵 review | 0 | — |
-| ⚪ pending | 3 | TASK-004, TASK-005, TASK-006 |
+| ✅ completed | 8 | TASK-001, TASK-002, TASK-003, TASK-004, TASK-005, TASK-006, TASK-008, TASK-601 |
+| 🟡 in_progress | 0 | — |
+| 🔵 review | 1 | TASK-007 |
+| ⚪ pending | 0 | — |
 | 🔴 blocked | 0 | — |
 
 ---
@@ -126,7 +126,9 @@ acceptance_criteria:
   - 五个待评审项全部给出结论
 test_requirements:
   - 建表 SQL 在临时库可执行通过（需 Docker 或本机 PG）
-status: in_progress
+status: completed
+completed_at: 2026-11-13
+evidence: alembic upgrade head 成功；alembic check 无差异；25 表 + 视图 + 触发器
 ```
 
 ### TASK-004 · Neo4j 图 Schema 设计与冻结
@@ -150,7 +152,8 @@ acceptance_criteria:
   - 遍历参数上限与超限行为写死
 test_requirements:
   - 约束/索引 cypher 在 Neo4j 5 上执行通过
-status: pending
+status: completed
+completed_at: 2026-11-13
 ```
 
 ### TASK-005 · API 契约冻结 + OpenAPI 骨架
@@ -177,7 +180,8 @@ acceptance_criteria:
 test_requirements:
   - 契约测试：OpenAPI 中的枚举与 enums.py 完全一致
   - 前端 npm run gen:api 能从该 OpenAPI 生成类型（可在 P4 前置验证）
-status: pending
+status: completed
+completed_at: 2026-11-13
 ```
 
 ### TASK-006 · 测试策略与固定数据集设计
@@ -199,7 +203,8 @@ acceptance_criteria:
   - 固定数据集规格明确（多少家公司、多少关系、多少注入错误）
   - 测试报告模板含"失败原因""未解决问题"
 test_requirements: []
-status: pending
+status: completed
+completed_at: 2026-11-13
 ```
 
 ### TASK-007 · 架构评审报告（Phase 0 交付）
@@ -218,7 +223,8 @@ acceptance_criteria:
   - 风险清单含概率/影响/缓解
   - 明确列出"本阶段没做的事"
 test_requirements: []
-status: pending
+status: review
+note: 报告已提交 reports/development/phase0-architecture-review.md，等待独立评审
 ```
 
 ---

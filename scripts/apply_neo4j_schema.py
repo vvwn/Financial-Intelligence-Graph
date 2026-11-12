@@ -15,8 +15,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
-from app.core.neo4j import close, get_driver  # noqa: E402
 from app.core.config import settings  # noqa: E402
+from app.core.neo4j import close, get_driver  # noqa: E402
 
 CYPHER_DIR = REPO_ROOT / "database" / "neo4j"
 FILES = ["constraints.cypher", "indexes.cypher"]
