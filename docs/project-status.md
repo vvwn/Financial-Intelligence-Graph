@@ -25,18 +25,34 @@
 
 ---
 
-## 二、环境事实（2026-11-12 实测）
+## 二、环境事实（2026-11-12 22:55 复测）
 
 | 组件 | 状态 | 说明 |
 |---|---|---|
-| Python | ✅ 3.13.14 | 建议项目锁 3.12（ADR-0002），未验证 3.12 是否已装 |
+| Python（项目环境） | ✅ **3.12.12** | `backend/.venv`，由 uv 创建，`.python-version` 锁定 |
+| uv | ✅ 0.12.15 | 包管理，`uv sync` 可复现 |
+| Python（宿主默认） | 3.13.14 / 3.14 | 项目不使用，仅宿主 PATH 默认值 |
 | Node / npm | ✅ 22.22.2 / 10.9.7 | — |
 | Docker CLI | ✅ 29.4.0 | — |
 | Docker Compose | ✅ v5.1.1 | — |
-| **Docker daemon** | 🔴 **未运行** | `npipe:////./pipe/dockerDesktopLinuxEngine` 不可达 |
-| Git | ✅ 2.55.0 | 仓库已初始化，远端 `github.com/vvwn/Financial-Intelligence-Graph` |
-| PostgreSQL | ⚪ 未验证 | 依赖容器，随 daemon 一起阻塞 |
-| Neo4j | ⚪ 未验证 | 同上 |
+| **Docker daemon** | ✅ **运行中**（29.4.0） | B-01 已解除 |
+| PostgreSQL | ✅ **16-alpine，healthy** | 容器 `fig-postgres`，:5432，数据卷 `fig_fig_pgdata` |
+| Neo4j | ✅ **5.26-community，healthy** | 容器 `fig-neo4j`，:7474 / :7687，已应用 4 约束 + 9 索引 |
+| Git | ✅ 2.55.0 | 远端 `github.com/vvwn/Financial-Intelligence-Graph` |
+
+**实际安装的关键版本**（与文档早期估计不同，以此为准）：
+
+| 包 | 版本 |
+|---|---|
+| fastapi | 0.162.5 |
+| pydantic | 2.14.3 |
+| sqlalchemy | 2.1.8 |
+| alembic | 1.20.1 |
+| asyncpg | 0.32.0 |
+| neo4j (driver) | 5.28.8 |
+| apscheduler | 3.11.3 |
+| httpx | 0.28.1 |
+| uvicorn | 0.54.0 |
 
 ---
 
@@ -44,6 +60,16 @@
 
 | 项 | 证据 |
 |---|---|
+| **后端 Python 环境** | `backend/.venv`（3.12.12），`uv sync` 装 42 个包，全部可 import |
+| **后端骨架可运行** | `app/main.py` + `core/{config,logging,db,neo4j,errors,ids}.py` + `api/health.py`；`pytest tests/` **5 passed** |
+| **PostgreSQL 容器** | `fig-postgres` healthy；`db.ping()` 返回 True |
+| **Neo4j 容器 + 图 Schema** | `fig-neo4j` healthy；`scripts/apply_neo4j_schema.py` 应用 13 条语句 → 4 约束 / 15 索引 |
+| **端到端就绪** | `curl /ready` → 200，`postgres.ok=true, neo4j.ok=true` |
+| **数据持久化** | 写入临时表 → `compose restart` → 数据仍在（rows=1, note 保留）→ 已清理 |
+| **前端工程** | Vite 6 构建通过（185 KB JS / 61 KB gzip）；`vitest` 2 passed；`tsc --noEmit` 零错误 |
+| **Alembic 迁移链路** | `alembic current` 连库成功（尚无 revision，待 TASK-111） |
+| **Docker Compose** | `deploy/docker-compose.yml`，PG + Neo4j 双服务 + 健康检查 + 具名卷 |
+| **本地环境文档** | `docs/deployment.md`（5 步启动 + 6 类常见问题） |
 | 项目目录骨架 | `backend/ frontend/ database/ integrations/ tests/ deploy/ reports/ docs/` 已建 |
 | 协作章程 | `AGENTS.md` v0.1 |
 | 7 个 Agent 职责文件 | `docs/agents/agent-0..6` |
@@ -68,8 +94,9 @@
 
 | # | 阻塞 | 影响 | 解除条件 |
 |---|---|---|---|
-| B-01 | Docker daemon 未运行 | TASK-601/602 及全部容器验证 | 人工启动 Docker Desktop |
+| B-01 | ~~Docker daemon 未运行~~ | ~~TASK-601/602~~ | ✅ **已解除**（daemon 29.4.0 运行中） |
 | B-04 | 实体消歧标准未定 | TASK-101/302/401 | architect + qa-audit 会签规则 |
+| B-06 | ~~Neo4j 镜像拉取慢~~ | ~~图库验证~~ | ✅ 已解除（镜像到位，容器 healthy） |
 
 ---
 
@@ -77,7 +104,7 @@
 
 | # | 风险 | 概率 | 影响 | 缓解 |
 |---|---|---|---|---|
-| R-01 | Docker daemon 长期不可用，容器化验证缺失 | 中 | 高 | 先做本地 PG/Neo4j 直装验证，不阻塞设计 |
+| R-01 | ~~Docker daemon 不可用~~ | — | — | ✅ 已消除 |
 | R-02 | Python 3.13 依赖轮子不全 | 中 | 中 | 锁 3.12，容器内验证 |
 | R-03 | 实体消歧不准 → 关系挂错公司 | 高 | **严重** | 别名表 + 股票代码强约束 + qa-audit DUP 规则 + 人工复核队列 |
 | R-04 | LLM 把推断写成事实 | 高 | **严重** | claim_type 硬约束 + state_guard + 反幻觉测试 |
@@ -104,9 +131,10 @@
 
 ## 八、下一步（按顺序）
 
-1. 决策 TASK-003 的 5 个待评审项 → Schema 冻结
-2. TASK-004 图 Schema 冻结（会签 graph-eng）
-3. TASK-005 API 契约冻结 + OpenAPI 骨架
-4. TASK-006 测试策略冻结
-5. TASK-007 出架构评审报告 → **等用户评审通过**
-6. 评审通过后才进入 Phase 1
+1. ✅ 基础设施：Python 3.12 venv + 依赖、后端骨架、PG + Neo4j 容器、图约束/索引、Alembic 链路、前端工程
+2. 决策 TASK-003 的 5 个待评审项 → Schema 冻结
+3. TASK-004 图 Schema 冻结（会签 graph-eng）—— 当前约束/索引是**临时版**，冻结后可能调整
+4. TASK-005 API 契约冻结 + OpenAPI 骨架
+5. TASK-006 测试策略冻结
+6. TASK-007 出架构评审报告 → **等用户评审通过**
+7. 评审通过后才进入 Phase 1

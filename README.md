@@ -34,10 +34,10 @@
 | [docs/testing-strategy.md](docs/testing-strategy.md) | 测试体系与错误注入方案 |
 | [docs/development-roadmap.md](docs/development-roadmap.md) | Phase 0–5 里程碑与验收标准 |
 
-## 技术栈（待 Phase 0 评审冻结）
+## 技术栈（已实测，2026-11-12）
 
-后端 Python 3.12 + FastAPI + Pydantic v2 + SQLAlchemy 2.0 + Alembic；
-业务库 PostgreSQL 16；图库 Neo4j 5；前端 React 18 + TypeScript + Vite + Cytoscape.js；
+后端 Python **3.12.12** + FastAPI 0.162 + Pydantic 2.14 + SQLAlchemy 2.1 + Alembic 1.20（uv 管理依赖）；
+业务库 PostgreSQL 16（容器）；图库 Neo4j 5.26；前端 React 18 + TypeScript 5.7 + Vite 6 + Cytoscape.js；
 调度 APScheduler；部署 Docker Compose；AI 经统一模型适配层调用。
 
 ## 目录结构
@@ -56,8 +56,12 @@ reports/       开发/测试/质量报告
 ## 本地起步
 
 ```bash
-cp .env.example .env          # 填写数据库与模型凭据
-docker compose -f deploy/docker-compose.yml up -d
+cp .env.example .env                                  # 1. 填写两个数据库密码
+docker compose -f deploy/docker-compose.yml --env-file .env up -d   # 2. PG + Neo4j
+
+cd backend && uv sync && uv run uvicorn app.main:app --reload       # 3. 后端 :8000
+cd frontend && npm install && npm run dev                           # 4. 前端 :5173
 ```
 
-（Phase 0 阶段以上命令尚未可运行，随 TASK-601 交付。）
+验证：`curl localhost:8000/ready` 返回 200 且 `postgres` / `neo4j` 均 `ok`。
+详细步骤与排错见 [docs/deployment.md](docs/deployment.md)。

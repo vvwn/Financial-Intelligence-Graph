@@ -12,19 +12,21 @@
 
 交付标准不是「我这里能跑」，而是「新环境 + 一份文档 = 能跑」。
 
-## 2. 当前环境实测（2026-11-12）
+## 2. 当前环境实测（2026-11-12 22:55 复测）
 
 | 项 | 实测 |
 |---|---|
-| Docker CLI | 29.4.0 已安装 |
-| Docker Compose | v5.1.1 已安装 |
-| **Docker daemon** | **未运行**（`npipe:////./pipe/dockerDesktopLinuxEngine` 连接失败） |
-| Python | 3.13.14（建议项目锁定 3.12，见 ADR-0002） |
+| Docker CLI | 29.4.0 |
+| Docker Compose | v5.1.1 |
+| **Docker daemon** | ✅ **运行中**（29.4.0），B-01 已解除 |
+| Python（项目） | **3.12.12**，`backend/.venv`（uv 管理） |
+| Python（宿主默认） | 3.13.14 / 3.14，项目不使用 |
 | Node / npm | v22.22.2 / 10.9.7 |
 | Git | 2.55.0.windows.3 |
+| PostgreSQL | 16-alpine，容器 healthy |
+| Neo4j | 5.26-community，镜像拉取中 |
 
-> **结论：本 Agent 的容器类任务（TASK-601）当前 blocked。**
-> 需人工启动 Docker Desktop 后解除。解除前可先交付「不依赖 daemon 的部分」：compose 文件、初始化脚本、健康检查代码、部署文档。
+> 早期记录的「daemon 未运行」已过期。**改环境结论前必须重跑 `docker info` 与 `uv --version`，不要抄旧记录。**
 
 ## 3. 负责模块
 
@@ -59,10 +61,12 @@ reports/development/deploy-*.md
 
 ## 5. 输入数据
 
-- 各 Agent 的依赖清单（`backend/requirements.txt`、`frontend/package.json`）
+- 各 Agent 的依赖清单（`backend/pyproject.toml` + `uv.lock`、`frontend/package.json` + `package-lock.json`）
 - `database/migrations/`（Alembic）
 - `database/neo4j/*.cypher`
-- 环境变量清单
+- 环境变量清单（`.env.example`）
+
+> 后端依赖真源是 `backend/pyproject.toml`（uv 管理），**不维护 requirements.txt**。镜像构建用 `uv sync --frozen`。
 
 ## 6. 输出数据
 

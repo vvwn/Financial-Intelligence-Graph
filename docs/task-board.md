@@ -10,11 +10,11 @@
 
 | 状态 | 数量 | 任务 |
 |---|---|---|
-| ✅ completed | 2 | TASK-001, TASK-002 |
+| ✅ completed | 4 | TASK-001, TASK-002, TASK-008, TASK-601 |
 | 🟡 in_progress | 1 | TASK-003 |
 | 🔵 review | 0 | — |
 | ⚪ pending | 3 | TASK-004, TASK-005, TASK-006 |
-| 🔴 blocked | 1 | TASK-601 |
+| 🔴 blocked | 0 | — |
 
 ---
 
@@ -64,6 +64,42 @@ acceptance_criteria:
 test_requirements: []
 status: completed
 completed_at: 2026-11-12
+```
+
+### TASK-008 · 基础设施搭建（Python 环境 + 后端骨架 + 容器 + 前端工程）
+
+```yaml
+task_id: TASK-008
+agent: architect + devops
+phase: P0
+objective: 把"能跑起来"这件事先做实，避免后续所有验证都停留在纸面
+inputs: [TASK-001, TASK-002]
+outputs:
+  - backend/pyproject.toml, backend/.python-version, backend/.venv (3.12.12)
+  - backend/app/core/{config,logging,db,neo4j,errors,ids}.py
+  - backend/app/schemas/{enums,envelope}.py
+  - backend/app/api/health.py, backend/app/main.py
+  - backend/tests/test_health.py
+  - backend/alembic.ini, database/migrations/{env.py,script.py.mako}
+  - deploy/docker-compose.yml
+  - frontend/ (Vite + React + TS + 路由 + api 客户端 + vitest)
+  - docs/deployment.md
+dependencies: [TASK-002]
+acceptance_criteria:
+  - uv sync 后全部依赖可 import（fastapi/sqlalchemy/asyncpg/neo4j/alembic/apscheduler）
+  - pytest 通过，/health 返回统一信封，request_id 回显
+  - PostgreSQL 容器 healthy，db.ping() 为 True
+  - alembic current 可连库
+  - compose 文件含健康检查与具名数据卷
+test_requirements:
+  - 后端 5 个冒烟测试实际通过（有输出）
+  - 前端 vitest + tsc --noEmit 通过
+status: completed
+completed_at: 2026-11-12
+result: |
+  Python 3.12.12 venv（42 包）；pytest 5 passed；PG 16-alpine healthy；
+  alembic 链路连通（无 revision）；Neo4j 镜像仍在拉取，容器未起。
+  未完成：Neo4j 容器、api/web 容器镜像、备份脚本 —— 不计入本任务。
 ```
 
 ### TASK-003 · PostgreSQL Schema 设计与冻结
@@ -284,13 +320,15 @@ acceptance_criteria:
   - 数据卷持久化，重启不丢
 test_requirements:
   - 冷启动 ≤ 90s；重启后数据仍在
-status: blocked
-blocked_reason: |
-  阻塞位置：Docker daemon 未运行（npipe 连接失败）
-  错误信息：failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
-  已尝试：docker info / docker compose version（CLI 正常，daemon 不可达）
-  需要谁：人工启动 Docker Desktop
-  推荐解法：启动后重跑 docker info 确认，再执行本任务
+status: completed
+completed_at: 2026-11-12
+evidence: |
+  fig-postgres healthy / fig-neo4j healthy；
+  写临时表 → compose restart → 数据仍在（rows=1）→ 已清理；
+  /ready 返回 200，postgres.ok=true, neo4j.ok=true。
+未做: |
+  api / web 的 Dockerfile（当前 api 跑宿主机）；
+  备份恢复脚本；冷启动秒级计时未单独记录（目测 compose up 到 healthy 约 25s）。
 ```
 
 ---

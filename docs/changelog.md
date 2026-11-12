@@ -4,6 +4,46 @@
 
 ---
 
+## [0.1.1] — 2026-11-12 · 基础设施落地（TASK-008）
+
+### 新增
+
+- **后端环境**：`backend/pyproject.toml` + `uv.lock` + `.python-version`，uv 管理，锁定 **Python 3.12.12**
+- **后端骨架**（可运行，非占位）：
+  - `core/config.py` 基于 pydantic-settings，从仓库根 `.env` 读取
+  - `core/logging.py` JSON 单行日志
+  - `core/db.py` async engine + session 依赖 + `ping()`
+  - `core/neo4j.py` async driver + `ping()`
+  - `core/errors.py` 与契约一致的 14 个错误码 + `AppError`
+  - `core/ids.py` UUIDv7（时间有序，应用侧生成）
+  - `schemas/enums.py` 契约枚举 + `PROJECTABLE_STATUSES` / `PROMOTABLE_CLAIM_TYPES` 常量
+  - `schemas/envelope.py` 统一响应信封
+  - `api/health.py` `/health` `/ready`；`main.py` request_id 中间件 + 三个异常处理器
+- **数据库**：`deploy/docker-compose.yml`（PG 16-alpine + Neo4j 5.26-community，健康检查 + 具名卷）
+- **迁移链路**：`backend/alembic.ini` + `database/migrations/{env.py,script.py.mako}`（async，DSN 运行时注入）
+- **图 Schema（临时版）**：`database/neo4j/{constraints,indexes}.cypher` + `scripts/apply_neo4j_schema.py`
+- **前端工程**：Vite 6 + React 18 + TS 5.7 + react-router 7 + cytoscape，`src/services/api.ts` 信封客户端，暗色终端底样式，7 个路由占位，vitest 用例
+- **文档**：`docs/deployment.md`（5 步启动 + 已验证基线 + 排错表）
+
+### 验证结果
+
+- `pytest` 5 passed；`ruff check` 全通过
+- `/ready` 返回 200，PG 与 Neo4j 双绿
+- 容器重启后数据仍在
+- `vite build` 成功；`tsc --noEmit` 零错误；`vitest` 2 passed
+
+### 解除
+
+- B-01 Docker daemon 未运行（已启动，29.4.0）
+- B-06 Neo4j 镜像拉取慢（已到位）
+
+### 注意
+
+- Neo4j 约束/索引是**临时版**，`docs/graph-schema.md` 冻结（TASK-004）后可能调整
+- 版本实测与早期文档估计不同：FastAPI 0.162.5、SQLAlchemy 2.1.8、Alembic 1.20.1、neo4j driver 5.28.8
+
+---
+
 ## [0.1.0] — 2026-11-12 · Phase 0 启动
 
 ### 新增

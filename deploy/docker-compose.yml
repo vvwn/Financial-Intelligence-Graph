@@ -1,0 +1,60 @@
+# FIG 开发环境 —— PostgreSQL 16 + Neo4j 5
+#
+# 用法：
+#   cp .env.example .env          # 填写密码
+#   docker compose -f deploy/docker-compose.yml up -d
+#   docker compose -f deploy/docker-compose.yml ps
+#
+# 数据卷：fig_pgdata / fig_neo4jdata（重启不丢数据）
+
+name: fig
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fig-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fig}
+      POSTGRES_USER: ${POSTGRES_USER:-fig}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      # 中文排序与大小写不敏感比较，为后续实体名匹配做准备
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - fig_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fig} -d ${POSTGRES_DB:-fig}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: fig-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 512m
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - fig_neo4jdata:/data
+      - fig_neo4jlogs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  fig_pgdata:
+  fig_neo4jdata:
+  fig_neo4jlogs:
