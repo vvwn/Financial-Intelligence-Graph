@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     alembic_ini_path: str = str(REPO_ROOT / "backend" / "alembic.ini")
     migrations_path: str = str(REPO_ROOT / "database" / "migrations")
 
+    # ---- data sources ----
+    #: Tushare Pro token. Empty means the Tushare collector is skipped.
+    tushare_token: str = ""
+
     # ---- llm ----
     llm_default_provider: str = "openai_compatible"
     llm_default_model: str = ""

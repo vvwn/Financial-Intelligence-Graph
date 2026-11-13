@@ -20,6 +20,8 @@ dependencies = [
     "pypinyin>=0.55.0",
     "baostock>=0.9.4",
     "pypdf>=7.1.0",
+    "tushare>=1.4.29",
+    "six>=1.17.0",
 ]
 
 [dependency-groups]

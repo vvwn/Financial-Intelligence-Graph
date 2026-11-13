@@ -1,6 +1,6 @@
 # 项目状态
 
-> 最后更新：2026-11-13 21:40 · 维护者：`architect`
+> 最后更新：2026-11-13 21:55 · 维护者：`architect`
 > **状态语义严格区分**：未开始 / 已写代码 / 已运行 / 测试通过 / 已合并 / 已部署 / 已验证实际数据。
 
 ---
@@ -41,6 +41,8 @@
 | 巨潮数据源调查 | ✅ 完成 | `reports/development/datasource-cninfo-investigation.md` |
 | 年报子公司表抽取 | ✅ 已接入（中际旭创 26 家，全 A 级） | `scripts/import_subsidiaries.py` |
 | gsxt 可用性评估 | ✅ 完成（结论：不接入） | `reports/development/datasource-gsxt-assessment.md` |
+| Tushare 接入 | ✅ 51 家：申万三级 + 主营构成 | `scripts/enrich_classification_tushare.py` |
+| Tushare 评估 | ✅ 完成（无供应链数据） | `reports/development/datasource-tushare-assessment.md` |
 | 演示数据 | 已移除 | 按评审方指示删除 |
 | 全量测试 | ✅ **127 passed** | `reports/testing/2026-11-13-full.log` |
 | 图一致性 | ✅ 94 节点 / 80 边 / `reconcile consistent=True` | 同上 |

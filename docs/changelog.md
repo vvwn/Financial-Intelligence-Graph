@@ -4,6 +4,40 @@
 
 ---
 
+## [1.5.0-phase1] — 2026-11-13 · 接入 Tushare（分类证据升级）
+
+### 可用性（实测，token 有效）
+
+| 接口 | 状态 |
+|---|---|
+| `stock_basic` / `index_member_all` / `fina_mainbz` / `stock_company` / `top10_holders` | ✅ |
+| `ths_index` / `ths_member` / `bak_basic` / `stk_surv` | ❌ 无权限 |
+| `report_rc` / `concept` | 🟡 限 1 次/分钟 |
+
+**Tushare 没有客户/供应商数据**——和其他公开源一样，解决不了供应链具名边。
+
+### 但提升了分类证据
+
+- 新增 `app/collectors/tushare_collector.py`、`scripts/enrich_classification_tushare.py`
+- 51/51 家公司补上 `sw_l1/l2/l3`、`revenue_mix`（产品级营收）、`main_business`
+- `belongs_to_industry` 边新增第二条证据（B 级）：
+  「申万三级：通信网络设备及器件；主营构成：光通信收发模块 374.57 亿元，占 97.95%」
+- 产业归属从「项目判断」升级为「第三方分类 + 公司披露数据」
+
+### 建模发现
+
+行业分类（申万/证监会）与产业链主题归属是**两个维度**：立讯精密申万归「消费电子零部件」，
+但在 AI 算力链里做高速连接器。建议 `belongs_to_industry.attributes.taxonomy` 区分
+`sw_industry` 与 `thematic_chain`，前端分开呈现。
+
+### 修的两个坑
+
+- token 从 `os.environ` 读不到（`.env` 不会导出到环境）→ 改走 `settings.tushare_token`
+- pandas 的 `NaN` 不是合法 JSON，写 jsonb 时报 `invalid input syntax for type json` → 加 `math.isfinite` 过滤
+- Tushare 的「合计特别调整」不是业务条线 → 过滤
+
+---
+
 ## [1.4.0-phase1] — 2026-11-13 · 年报子公司表抽取 + gsxt 评估
 
 ### gsxt 结论（不接入）
