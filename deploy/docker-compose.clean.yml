@@ -1,0 +1,10 @@
+# Override used only by scripts/verify_clean_env.sh.
+# Purpose: a second, isolated environment with its own volumes and container
+# names, so the clean-environment drill cannot touch the working one.
+# Ports come from the env file passed with --env-file.
+
+services:
+  postgres:
+    container_name: figclean-postgres
+  neo4j:
+    container_name: figclean-neo4j

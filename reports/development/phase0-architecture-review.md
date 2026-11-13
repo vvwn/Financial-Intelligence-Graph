@@ -15,6 +15,7 @@
 | 2 | 取得一次真实 GitHub Actions 成功记录 | ✅ **已验证** | run **#3**（最终提交）`success`，见 `reports/testing/github-actions-evidence.md` |
 | 3 | 重建 `fig-api:0.1.1` + 部署 + `/ready` | ✅ **已验证** | `reports/testing/2026-11-13-container-deploy.log` |
 | 4 | 更新最终评审报告 | ✅ 本文件 | — |
+| 5 | （追加）干净环境部署演练 | ✅ **已验证** | `reports/testing/2026-11-13-clean-env-drill.log` |
 
 **本轮没有做的事**：没有新增业务端点、没有写采集器、没有动 Phase 1 任何任务。唯一代码改动是修复下面这个被核验抓出来的缺陷。
 
@@ -171,16 +172,41 @@ d91f2b6c4a07
 
 ## 七、干净环境可重复部署
 
+本轮新增了一个**可重复执行的干净环境演练**：`scripts/verify_clean_env.sh`。
+它用独立 compose 项目名 + 独立端口（55432 / 57687 / 57474）+ 空数据卷起一套全新环境，
+从空库跑完迁移、测试与不变量核验，最后整体拆除并删卷。**不触碰工作环境。**
+
+```
+[1/6] start a brand-new environment (project=figcleanverify, pg=55432, neo4j=57687)
+[2/6] wait for both to report healthy
+      postgres=healthy neo4j=healthy
+[3/6] build the schema from migrations only (empty database)
+INFO  Running upgrade  -> bdaf9a0511cb, init schema
+INFO  Running upgrade bdaf9a0511cb -> c7d1e4a92f10, disputed semantics, sort keys, evidence origin
+INFO  Running upgrade c7d1e4a92f10 -> d91f2b6c4a07, fix disputed evidence check (array_length -> cardinality)
+No new upgrade operations detected.
+[4/6] apply Neo4j constraints and indexes
+applied 14 statements; constraints=4 indexes=15
+[5/6] full test suite against the clean environment
+100 passed
+[6/6] invariant checks against the clean environment
+===== 19 passed, 0 failed =====
+
+clean-environment drill PASSED
+[cleanup] tearing down figcleanverify and removing its volumes
+```
+
+完整日志：`reports/testing/2026-11-13-clean-env-drill.log`
+
 | 证据 | 说明 |
 |---|---|
-| **CI 就是干净环境** | 每次 run 都是全新 Ubuntu runner + 全新 PostgreSQL/Neo4j service 容器，从 `alembic upgrade head` 建库到 100 个测试通过，全自动 |
-| 空库迁移 | CI 与本地均从空库 `upgrade head` 一次通过，`alembic check` 无差异 |
-| 依赖可复现 | 后端 `uv.lock`、前端 `package-lock.json` 均入库 |
-| 镜像可重建 | `deploy/backend.Dockerfile` 构建成功（本轮 3 次构建，2 次因 Hub 502 失败，1 次成功） |
+| 空卷 → 可用的完整 schema | 3 个迁移从零执行，`alembic check` 无差异 |
+| 空卷 → 100 个测试通过 | 含 34 个 DB/Neo4j 集成测试 |
+| 空卷 → 19 项不变量成立 | 触发器、CHECK、视图全部在新库生效 |
+| 依赖可复现 | `uv.lock` / `package-lock.json` 入库 |
+| CI 是更强的同类证据 | 全新 Ubuntu runner + 全新 service 容器，每次 push 自动重跑 |
 
-**未做的**：没有在真正的干净物理机/VM 上从零走一遍。CI 是最接近的等价物，但不是同一件事。
-
----
+**仍然没有覆盖的**：操作系统与运行时安装层（本机已有 Python/Docker/Node）。这一层只能靠独立物理机或 VM 验证，属外部环境项。
 
 ## 八、三类清单（严格区分）
 
@@ -209,13 +235,14 @@ d91f2b6c4a07
 | GitHub Actions | run **#3**（最终提交）`success`，11 步 + 7 步全绿 | `github-actions-evidence.md` |
 | 容器部署 + `/ready` | 三检全绿，缓存生效 | `2026-11-13-container-deploy.log` |
 | 备份恢复演练 | PASSED（含真实数据比对） | `2026-11-13-backup-drill.log` |
+| **干净环境部署演练** | **PASSED**（空卷 → 3 迁移 → 100 tests → 19 不变量） | `2026-11-13-clean-env-drill.log` |
 | 静态检查 | All checks passed | `2026-11-13-ruff.log` |
 
 ### C. 因外部原因暂缓（不是代码缺陷）
 
 | 项 | 外部原因 | 影响 | 可替代证据 |
 |---|---|---|---|
-| 真正干净物理机/VM 部署 | 无可用干净环境 | 无法声称「换台机器一定能跑」 | CI 全新 runner 是最接近的等价物 |
+| 操作系统/运行时层从零安装 | 无可用干净物理机或 VM | 只能证明「空数据卷可重建」，不能证明「空机器可重建」 | 本轮已补容器层干净演练；CI 覆盖 runner 层 |
 | Docker Hub 稳定性 | 本轮 3 次构建中 2 次被 `502 Bad Gateway` 阻断 | 镜像重建耗时不稳 | 第 3 次成功；镜像与库版本已核对一致 |
 
 **这两项不计入「已完成」，也不当作代码缺陷。**
@@ -228,7 +255,7 @@ d91f2b6c4a07
 
 | 标准 | 自评 | 依据 |
 |---|---|---|
-| 能在干净环境重复部署 | **基本达成，有保留** | CI 全自动从空库建到 100 测试通过；但没在独立物理机验过 |
+| 能在干净环境重复部署 | **达成（基础设施层）** | 空卷演练：3 迁移 → 100 tests → 19 不变量全过，可重复执行；CI 每次 push 在新 runner 重跑。未覆盖 OS 层 |
 | 能可靠检测错误 | **达成** | 本轮用裸 SQL 抓出一个「测试全绿但约束失效」的缺陷；CI 首跑抓出 8 个坏测试 |
 | 能保护证据 | **达成** | I-5 九项核验全过，含改正文/改等级/删除/改来源/倒序 5 类非法操作被数据库拒绝 |
 | 出现矛盾时正确停止错误传导 | **达成（机制层）** | disputed 阻断传导、冲突未消解不得验证、`POTENTIAL_*` 永不进图、阈值不自动验证。传导算法本身属 P2，尚未实现 |

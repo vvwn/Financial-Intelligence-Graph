@@ -140,6 +140,20 @@ frontend/vite.config.ts    ← /api 代理
 
 ---
 
+## 干净环境演练
+
+```bash
+bash scripts/verify_clean_env.sh
+```
+
+起一套独立 compose 项目（独立端口 55432 / 57687 / 57474、空数据卷），从零执行 3 个迁移 →
+100 个测试 → 19 项不变量核验，末尾自动拆除并删卷。**不触碰工作环境。**
+
+覆盖：空数据卷能否重建完整 schema 与约束。
+未覆盖：操作系统与运行时安装层（需独立物理机/VM）。
+
+---
+
 ## 尚未完成（不谎报）
 
 - 容器镜像 `fig-api:0.1.1` 重建被 Docker Hub 502 阻断（`failed to fetch oauth token`）；`0.1.0` 镜像内的迁移脚本旧于数据库，`/ready` 会如实报 `migration.ok=false`——这是探针在正常工作

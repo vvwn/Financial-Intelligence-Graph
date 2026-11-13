@@ -27,10 +27,16 @@
 | 容器 `fig-api:0.1.1` | ✅ healthy，`/ready` 三检全绿（head `d91f2b6c4a07`） |
 | `alembic check` | ✅ 无差异 |
 
+### 新增（核验工具）
+
+- `scripts/verify_clean_env.sh`：独立 compose 项目 + 独立端口 + 空卷，从零跑迁移/测试/不变量，末尾自动拆卷
+- `deploy/docker-compose.clean.yml`：干净环境专用 override（独立容器名）
+- `deploy/docker-compose.yml`：Neo4j 端口参数化（`NEO4J_HTTP_PORT` / `NEO4J_BOLT_PORT`），支持双环境并存
+
 ### 明确未做
 
 - 未新增业务端点，未进入 Phase 1
-- 未在独立物理机/VM 验证部署（外部环境项）
+- 未在独立物理机/VM 验证部署（外部环境项，仅剩 OS/运行时层）
 
 ---
 
