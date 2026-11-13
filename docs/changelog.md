@@ -4,6 +4,39 @@
 
 ---
 
+## [1.8.0-phase1] — 2026-11-14 · iFinD MCP 打通（首个有供应链结构的源）
+
+### 端点（实测）
+
+用户给的网页地址不是端点；真实地址在官方 SKILL 包里：
+`https://api-mcp.51ifind.com:8643/ds-mcp-servers/<service>`
+
+10 个服务：stock / fund / edb / news / bond / global-stock / index / futures /
+**kuaicha-enterprise** / law。
+
+协议：MCP Streamable HTTP，`Authorization: <token>`（裸值，不加 Bearer），
+三步握手（initialize → notifications/initialized → tools/call），session id 在响应头。
+
+### 关键能力
+
+- A股 10 个工具（行情/财务/股东/事件/ESG/风险/高频）
+- 快查 2 个元工具：`kuaicha_tool_discover`（中文能力检索）+ `kuaicha_tool_call`
+- **产业链图谱**：`filter_get_industry_chain_atlas` 返回 上游/下游/替代/互补/包含
+  - 实测光模块(23992)：上游=光组件/光通信器件，下游=光通信设备
+- 产业链树：`filter_get_industry_chain_tree_structure`（430KB，6 层）
+- 节点企业：`filter_get_industry_chain_enterprise_list`
+
+### 定性（重要）
+
+产业链图谱是**产业节点级**上下游，不是公司级披露关系。从「A 属于光模块」「B 属于光通信器件」
+推到「A 从 B 采购」是**推断**，只能进候选层（`inferred` / `candidate`），不能自动 verified。
+
+### 合规
+
+token 等同账号权限，仅存 `.env`（`IFIND_MCP_TOKEN`），已确认仓库内无泄露。
+
+---
+
 ## [1.7.0-phase1] — 2026-11-13 · 路线 1：批量子公司抽取
 
 ### 结果

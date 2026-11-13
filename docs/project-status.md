@@ -1,6 +1,6 @@
 # 项目状态
 
-> 最后更新：2026-11-13 23:20 · 维护者：`architect`
+> 最后更新：2026-11-14 00:10 · 维护者：`architect`
 > **状态语义严格区分**：未开始 / 已写代码 / 已运行 / 测试通过 / 已合并 / 已部署 / 已验证实际数据。
 
 ---
@@ -45,6 +45,7 @@
 | Tushare 评估 | ✅ 完成（无供应链数据） | `reports/development/datasource-tushare-assessment.md` |
 | 东方财富接入 | ✅ 51 家：实控人 + 核心题材 | `scripts/enrich_eastmoney.py` |
 | 东财评估 + 五源总账 | ✅ 完成 | `reports/development/datasource-eastmoney-assessment.md` |
+| **iFinD MCP 评估** | ✅ **打通，含产业链上下游** | `reports/development/datasource-ifind-assessment.md` |
 | 演示数据 | 已移除 | 按评审方指示删除 |
 | 全量测试 | ✅ **127 passed** | `reports/testing/2026-11-13-full.log` |
 | 子公司批量抽取 | ✅ **470 家子公司 / 479 条股权边（47/51 家）** | `reports/development/phase1-path1-subsidiaries.md` |
