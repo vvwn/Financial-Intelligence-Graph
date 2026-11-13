@@ -19,6 +19,7 @@ dependencies = [
     "python-multipart>=0.0.12",
     "pypinyin>=0.55.0",
     "baostock>=0.9.4",
+    "pypdf>=7.1.0",
 ]
 
 [dependency-groups]

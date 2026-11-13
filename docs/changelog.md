@@ -4,6 +4,35 @@
 
 ---
 
+## [1.3.0-phase1] — 2026-11-13 · 巨潮数据源调查 + 首条真实供应链边
+
+### 调查结论（详见 `reports/development/datasource-cninfo-investigation.md`）
+
+- 巨潮公告 API 与 PDF 下载均可用，无需登录
+- **年报「前五名客户/供应商」名称匿名**（客户 A/B/C/D/E），只有金额与占比
+- **年报「关联交易」部分具名**，多数写「公司联营企业」
+- **关联交易公告具名**：交易对方、金额、期限、股权关系齐全 → A 级证据
+
+### 新增
+
+- `database/seeds/related_party_edges.yaml`：人工抽取的具名关联交易边（带公告直链与原文摘录）
+- `scripts/import_related_party_edges.py`：按 YAML 建实体 / 证据 / Claim / 关系
+- 首条真实供应链边：太极实业 --controls--> 海太半导体 --supplies_to--> 爱思开海力士株式会社
+
+### 实测
+
+```
+projection: nodes=68 edges=54; consistent=True
+太极实业 depth=2 → 7 nodes / 7 edges（3 条 A 级 + 4 条 B 级产业归属）
+```
+
+### 覆盖率的现实
+
+公开数据只能建「关联方」之间的边。商业客户/供应商名称在年报里匿名、
+合同多受保密条款约束，公开渠道拿不到。非关联的产业链关系需付费数据源（路线 B）。
+
+---
+
 ## [1.2.0-phase1] — 2026-11-13 · 接入 Baostock 真实数据
 
 ### 新增

@@ -1,0 +1,66 @@
+# 关联交易公告中具名的供应链关系（人工抽取，可复核）
+#
+# 为什么只有这几条：巨潮年报里「前五名客户/供应商」是匿名的（客户 A/B/C/D/E），
+# 只有「关联交易公告」会点名交易对方、金额、期限。因此本文件只收关联方交易，
+# 覆盖范围天然有限——非关联的商业客户在公开数据里拿不到名字。
+#
+# 每条都必须带：
+#   source_url    巨潮 PDF 直链（可点开核对）
+#   excerpt       公告原文摘录（不得改写）
+#   parties       涉及的实体，name 必须与公告一致
+#
+# 抽取模板（供 P2 采集器复用）：
+#   「关于…与…签署《…合同》暨关联交易的公告」
+#   → subject 提供 … 给 counterparty，期限 …，金额/定价模式 …
+
+version: 1
+updated_at: "2026-11-13"
+
+edges:
+  - id: RPE-600667-SKHYNIX-2025
+    announcement_title: 关于控股子公司海太半导体拟与SK海力士签署《第四期后工序服务合同》暨关联交易的公告
+    announcement_date: "2025-06-19"
+    source_url: http://static.cninfo.com.cn/finalpage/2025-06-19/1223910508.PDF
+    evidence_grade: A
+    excerpt: >-
+      海太半导体与SK海力士于2009年11月27日、2015年4月29日和2020年6月30日就后工序服务的合作事宜，
+      先后签署了《后工序服务合同》《第二期后工序服务合同》《第三期后工序服务合同》，
+      由海太半导体向SK海力士提供半导体后工序服务。双方拟就半导体后工序服务合作事宜签署四期合同，
+      明确海太半导体在未来5年（2025年7月1日至2030年6月30日）继续以“全部成本+约定收益”的盈利模式
+      向SK海力士提供半导体后工序服务。SK海力士为公司子公司海太半导体第二大股东（持股45%），
+      是公司关联人。公司持有海太半导体55%股权。
+
+    entities:
+      - key: taiji
+        name: 太极实业
+        entity_type: listed_company
+        stock_code: "600667"
+        exchange: SSE
+        industry_code: AI-COMPUTE-PACKAGING
+      - key: haitai
+        name: 海太半导体
+        entity_type: subsidiary
+        industry_code: AI-COMPUTE-PACKAGING
+      - key: skhynix
+        name: 爱思开海力士株式会社
+        entity_type: private_company
+        aliases: [SK海力士, SK hynix]
+
+    relationships:
+      - source: taiji
+        target: haitai
+        type: controls
+        confidence: 0.95
+        note: 公司持有海太半导体 55% 股权
+      - source: haitai
+        target: skhynix
+        type: supplies_to
+        confidence: 0.95
+        valid_from: "2025-07-01"
+        valid_to: "2030-06-30"
+        note: 向 SK 海力士提供半导体后工序服务，定价模式为「全部成本+约定收益」
+      - source: skhynix
+        target: haitai
+        type: holds_stake_in
+        confidence: 0.95
+        note: SK 海力士持有海太半导体 45% 股权

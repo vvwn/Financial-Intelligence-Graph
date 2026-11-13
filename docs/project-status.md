@@ -1,6 +1,6 @@
 # 项目状态
 
-> 最后更新：2026-11-13 20:00 · 维护者：`architect`
+> 最后更新：2026-11-13 21:10 · 维护者：`architect`
 > **状态语义严格区分**：未开始 / 已写代码 / 已运行 / 测试通过 / 已合并 / 已部署 / 已验证实际数据。
 
 ---
@@ -37,10 +37,11 @@
 | 读 API（25 个端点） | ✅ | `test_api_graph.py` 9 例；`/openapi.json` 可生成 |
 | 产业分类 16 个 | ✅ | `database/seeds/industries.yaml` |
 | 真实公司数据（Baostock） | ✅ **51 家** | `database/seeds/ai_compute_universe.yaml` + `import_baostock_universe.py` |
-| 供应链关系（supplies_to） | ❌ **Baostock 无此数据** | 需公告/研报，等 P2 采集 |
+| 供应链关系（supplies_to） | 🟡 **已打通路径，覆盖率有限** | 巨潮关联交易公告；样例 3 条 A 级边已入图 |
+| 巨潮数据源调查 | ✅ 完成 | `reports/development/datasource-cninfo-investigation.md` |
 | 演示数据 | 已移除 | 按评审方指示删除 |
 | 全量测试 | ✅ **127 passed** | `reports/testing/2026-11-13-full.log` |
-| 图一致性 | ✅ 66 节点 / 51 边 / `reconcile consistent=True` | 同上 |
+| 图一致性 | ✅ 68 节点 / 54 边 / `reconcile consistent=True` | 同上 |
 
 交付报告：`reports/development/phase1-delivery.md`
 
