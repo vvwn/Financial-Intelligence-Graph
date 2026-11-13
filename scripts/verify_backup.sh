@@ -7,6 +7,10 @@
 
 set -euo pipefail
 
+# Git Bash on Windows rewrites /tmp/... into C:/... when passing args to docker.
+# Harmless on Linux/macOS (the variable is simply unused there).
+export MSYS_NO_PATHCONV=1
+
 CONTAINER="${PG_CONTAINER:-fig-postgres}"
 DB="${POSTGRES_DB:-fig}"
 DB_USER="${POSTGRES_USER:-fig}"

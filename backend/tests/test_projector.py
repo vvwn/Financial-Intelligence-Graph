@@ -59,7 +59,7 @@ async def _seed(
     )
     claim = await make_claim(session, supplier, customer)
     await link_claim(session, claim, rel)
-    for grade in grades or ["A"]:
+    for grade in (["A"] if grades is None else grades):
         ev = await add_evidence(session, make_evidence(grade))
         await link_evidence(session, rel, ev, claim)
     return rel, [str(supplier.id), str(customer.id)], claim

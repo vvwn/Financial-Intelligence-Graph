@@ -101,7 +101,8 @@ cd frontend && npm test && npm run typecheck
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | `failed to connect to the docker API at npipe:...` | Docker Desktop 未启动 | 启动 Docker Desktop，等托盘图标变绿 |
-| `/ready` 返回 503 且 `postgres.ok=false` | 容器没起或密码不一致 | `docker compose ps`；核对 `.env` 与 `DATABASE_URL` |
+| `/ready` 返回 503 且 `postgres.ok=false`，错误是 `TimeoutError` | **`POSTGRES_HOST=localhost` 走了 IPv6 `::1`，而容器只绑 `127.0.0.1`** | 把 `POSTGRES_HOST` 与 `DATABASE_URL` 里的主机改成 `127.0.0.1`（本仓库 `.env` 已改） |
+| `/ready` 返回 503 且 `postgres.ok=false`（其他错误） | 容器没起或密码不一致 | `docker compose ps`；核对 `.env` 与 `DATABASE_URL` |
 | `/ready` 返回 503 且 `neo4j.ok=false` | Neo4j 还在启动（首次约 30–60s） | 等一会儿再试；`docker logs fig-neo4j` |
 | `uv sync` 报找不到 3.12 | 本机无 3.12 | `uv python install 3.12` |
 | 端口被占用 | 本机已有 PG/Neo4j | 改 `.env` 的 `POSTGRES_PORT`，或停掉本机服务 |
@@ -132,14 +133,15 @@ frontend/vite.config.ts    ← /api 代理
 | `curl /ready` | 200，`postgres.ok=true`、`neo4j.ok=true` |
 | 数据持久化 | 写临时表 → `compose restart` → 数据仍在 |
 | Neo4j 图 Schema | 4 约束 / 15 索引（含默认），`scripts/apply_neo4j_schema.py` 可重复执行 |
-| 后端测试 | `pytest` 5 passed |
+| 数据库迁移 | `alembic upgrade head` → `bdaf9a0511cb → c7d1e4a92f10`；`alembic check` 无差异 |
+| 备份恢复 | `scripts/verify_backup.sh` PASSED（含 2 实体 / 1 证据 / 1 关系实测） |
+| 后端测试 | `pytest` **100 passed** |
 | 前端 | `vitest` 2 passed；`tsc --noEmit` 零错误；`vite build` 185 KB（61 KB gzip） |
 
 ---
 
 ## 尚未完成（不谎报）
 
-- 容器化的 api / web 服务镜像（`deploy/backend.Dockerfile`）未做，当前 api 跑在宿主机
-- 备份 / 恢复脚本（`scripts/backup.sh`）未做
-- CI（GitHub Actions）未接
-- Alembic 尚无 revision（等 TASK-003 冻结 + TASK-111）
+- 容器镜像 `fig-api:0.1.1` 重建被 Docker Hub 502 阻断（`failed to fetch oauth token`）；`0.1.0` 镜像内的迁移脚本旧于数据库，`/ready` 会如实报 `migration.ok=false`——这是探针在正常工作
+- CI（GitHub Actions）工作流已写，未在 GitHub 上实际运行
+- 前端仍只在宿主机跑，未做 nginx 镜像

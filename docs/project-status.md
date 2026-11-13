@@ -1,6 +1,6 @@
 # 项目状态
 
-> 最后更新：2026-11-13 08:50 · 维护者：`architect`
+> 最后更新：2026-11-13 09:15 · 维护者：`architect`
 > **状态语义严格区分**：未开始 / 已写代码 / 已运行 / 测试通过 / 已合并 / 已部署 / 已验证实际数据。
 
 ---
@@ -21,10 +21,10 @@
 | `task-dependencies.md` | ✅ v0.1 | 30 任务、10 波次、无环 |
 | `development-roadmap.md` | ✅ v0.1 | P0–P5 |
 | **`reports/development/phase0-architecture-review.md`** | ✅ **v2 已提交，待签署** | 36 条缺陷 + 裁决执行结果 + 测试原文 |
-| 代码 | ✅ 骨架 + 2 个迁移 + 状态守卫 + 投影原语 | 62 单元通过；34 个 DB 测试被阻塞 |
+| 代码 | ✅ 骨架 + 2 个迁移 + 状态守卫 + 投影原语 | **全量 100 passed / 0 failed** |
 
-**Phase 0 未完成的部分**：① 评审方签字；② Docker 恢复后跑完 34 个 DB/Neo4j 测试与备份演练。
-在此之前状态保持 `awaiting_review`，不置 `completed`。
+**Phase 0 未完成的部分**：仅剩评审方签字。Docker 恢复后，迁移、全量测试、备份演练均已执行并留原始日志。
+状态保持 `awaiting_review`，不置 `completed`。
 
 ---
 
@@ -51,7 +51,9 @@
 |---|---|
 | 契约层冻结 | 三份文档 `status: frozen` **v1.1** + 测试策略 v1.1 |
 | 裁决执行 | disputed 语义、阈值只入核验、排序键、I-5 触发器、predicate CHECK |
-| 迁移 2 | `c7d1e4a92f10`：7 个新列 / 2 张新表 / 2 个触发器 / 1 个视图（**未在真实库执行**） |
+| 迁移 2 | `c7d1e4a92f10` **已在真实库执行**：28 表 / 2 视图 / 3 触发器；`alembic check` 无差异 |
+| 全量测试 | **100 passed / 0 failed**（PG + Neo4j 实连） |
+| 备份恢复演练 | `verify_backup.sh` PASSED（含真实数据比对） |
 | 排序键 | `core/sortkey.py`（拼音 + 多音字 + 数字补零），12 个单测通过 |
 | 投影原语 | `graph/projector.py`（单关系投影 + 删边），7 个测试待 DB |
 | 运维脚本 | `backup.sh` / `restore.sh` / `verify_backup.sh`（未演练） |
@@ -85,7 +87,8 @@
 | B-04 | 实体消歧标准未定（Q-01） | TASK-101/302/401 | architect + qa-audit 会签规则 |
 | B-07 | `DISPUTED` 第 7 态未获批（Q-06） | 全部状态逻辑 | 评审方裁决 |
 | B-08 | 证据阈值未校准（Q-03b） | TASK-411 | 需 TASK-101 真实数据 |
-| B-09 | **Docker 守护进程不可用** | 34 个 DB/Neo4j 测试、迁移执行、备份演练 | 人工启动 Docker Desktop（本机 wsl.exe 被安全策略拦截） |
+| B-09 | ~~Docker 守护进程不可用~~ | — | ✅ 已解除（评审方手动启动，29.9.3） |
+| B-10 | 容器镜像 `fig-api:0.1.1` 重建被 Docker Hub 502 阻断 | 容器内跑新代码 | 等 Hub 恢复；宿主机运行已验证同一代码路径 |
 
 ---
 
@@ -115,7 +118,7 @@
 | D-06 | ~~证据不可变只有约定~~ | ✅ 已由触发器强制（ADR-0011） |
 | D-07 | ~~`predicate` 无 DB CHECK~~ | ✅ 已加 CHECK，取值 = 关系类型枚举 |
 | D-08 | 排序键算法升级需全量回填，期间键与原文可能不一致 | 每次升 `SORT_KEY_VERSION` 时跑 backfill |
-| D-09 | 迁移 `c7d1e4a92f10` 未在真实库验证 | Docker 恢复后立即执行 |
+| D-09 | ~~迁移未在真实库验证~~ | ✅ 已执行并通过 `alembic check` |
 
 ---
 

@@ -1,6 +1,6 @@
 # Phase 0 架构评审报告 v2（TASK-007 重新提交）
 
-> 提交时间：2026-11-13 08:55 · 提交方：`architect`
+> 提交时间：2026-11-13 09:10（v2.1，Docker 恢复后补齐验证）· 提交方：`architect`
 > 评审状态：**awaiting_review — 等待独立评审方签署**
 > 本版依据：评审方 2026-11-13 正式裁决（DISPUTED 批准 / locale=C 保留 / 阈值语义修正 / I-5 落地）
 > **本报告不包含任何自我通过声明。TASK-007 保持 `review`，Phase 0 保持 `awaiting_review`。**
@@ -12,16 +12,17 @@
 | 项 | 状态 | 证据 |
 |---|---|---|
 | 五项裁决执行 | ✅ 已实现 | 第二、三节逐条对照 |
-| 单元测试（不依赖 DB） | ✅ **62 passed** | `reports/testing/2026-11-13-unit.log` |
+| **全量测试（含 PG + Neo4j）** | ✅ **100 passed / 0 failed**（72s） | `reports/testing/2026-11-13-full.log` |
+| 探针实测 | ✅ 首次即绿；TTL 缓存生效；旧镜像被正确判定 migration 不一致 | 6.8 |
+| 迁移执行 | ✅ **成功** `bdaf9a0511cb → c7d1e4a92f10` | 第六节 6.4 |
+| 模型与库一致性 | ✅ No new upgrade operations detected | 同上 |
+| 证据不可变测试 | ✅ **9 passed** | 第六节 6.5 |
+| 状态转换测试 | ✅ **单元 38 + 集成 14 全过** | 第六节 6.6 |
+| 备份恢复演练 | ✅ **PASSED**（含真实数据） | 第六节 6.7 |
 | 静态检查 | ✅ All checks passed | `reports/testing/2026-11-13-ruff.log` |
-| 全量测试（含 DB/Neo4j） | ⚠️ **66 passed / 34 errors** | `reports/testing/2026-11-13-db-blocked.log` |
-| 迁移执行 | ❌ **未执行** | Docker 不可用 |
-| 证据不可变测试 | ❌ **已编写未运行** | 9 个用例待 DB |
-| 状态转换测试 | 🟡 **单元已过，集成未跑** | 38 个单测通过，14 个集成待 DB |
-| 备份恢复演练 | ❌ **未执行** | 脚本已写 |
-| CI | ❌ **未在 GitHub 运行** | 工作流文件已写 |
+| CI | ❌ **未在 GitHub 运行** | 唯一仍未验证项 |
 
-**必须说明**：本轮有 4 项验证因环境问题未执行。它们**不计为通过**，也不计为完成。
+**首轮全量测试的 8 个失败已修复，不是绕过**：2 个是我自己测试写错（用相同值改等级，触发器自然不拦；ORM 缓存导致读到旧值），6 个是 Neo4j driver 跨事件循环复用（`Event loop is closed`）。修复方式见 `backend/tests/conftest.py` 的 `_reset_neo4j_driver` 与两处测试改动。
 
 ---
 
@@ -174,41 +175,114 @@ All checks passed!
 
 ### 6.4 数据库迁移结果
 
-**未执行。** 迁移 `c7d1e4a92f10` 为手写（autogenerate 无法表达触发器/视图/主键变更），尚未在真实库跑过。
-Docker 恢复后必须依次执行并回填本节：
+```
+$ alembic current
+bdaf9a0511cb
+
+$ alembic upgrade head
+INFO  [alembic.runtime.migration] Running upgrade bdaf9a0511cb -> c7d1e4a92f10,
+      disputed semantics, sort keys, evidence origin
+
+$ alembic check
+No new upgrade operations detected.
+```
+
+**结构核对**（information_schema 实查）：
 
 ```
-alembic upgrade head
-alembic check          # 期望：No new upgrade operations detected
+tables=28
+views:    ['v_evidence_distinct', 'v_evidence_origin']
+triggers: ['trg_evidence_immutable', 'trg_evidence_linkage', 'trg_relationship_history_immutable']
+entity sort key cols: ['name_sort_key', 'name_sort_key_version']
+evidence new cols:    ['syndicated_from_id', 'origin_key']
 ```
+
+手写迁移一次执行通过，`alembic check` 确认模型与库无差异——触发器、视图、主键变更均已生效。
 
 ### 6.5 证据不可变测试结果
 
-**未运行**（9 个用例见 3.3）。Docker 恢复后回填。
+```
+$ pytest backend/tests/test_evidence_immutability.py -q
+9 passed
+```
+
+覆盖：改正文/改等级/删除/清空 supersedes 被拒（4）；改 `verification_status` 允许（1）；
+追加式修正合法（1）；转载共享 origin 合法（1）；异源 supersedes 被拒（1）；倒序 supersedes 被拒（1）。
+
+首轮暴露的真实缺陷：`test_update_grade_is_refused` 原本把 `A` 改成 `A`（无变化，触发器自然不拦）——
+是测试写错，不是约束失效；已改为 `C → A`。
 
 ### 6.6 状态转换测试结果
 
-- 单元层：38 个用例全部通过（7×7 矩阵、disputed 可达性、阈值语义、独立性、传导准入）
-- 集成层：14 个用例待 DB（生命周期、双方证据并存、冲突消解、撤销留痕）
+```
+$ pytest backend/tests/test_state_guard.py backend/tests/test_relationship_lifecycle.py -q
+52 passed
+```
+
+- 单元 38 例：7×7 矩阵、`pending_review → disputed` 非法、disputed 仅自 verified、阈值只授予 pending_review、自动化 actor 拒绝批准、同 origin 转载只算 1 个来源、传导只放行 verified
+- 集成 14 例：阈值入队、无批准不得验证、disputed 双方证据并存、冲突未消解不得验证、冲突消解后可恢复 verified、撤销留痕不删行、通用迁移不能越权验证
+
+### 6.7 备份恢复演练结果
+
+```
+$ scripts/verify_backup.sh
+[1/4] dump
+[2/4] restore into fig_restore_verify_...
+[3/4] compare row counts
+  ok   entity: 2
+  ok   evidence: 1
+  ok   claim: 0
+  ok   relationship: 1
+  ok   relationship_history: 0
+  ok   app_setting: 11
+[4/4] drop scratch database
+backup/restore drill PASSED
+```
+
+演练前先写入 2 实体 / 1 证据 / 1 关系，确保比对不是 0==0 的空转。演练后已清理。
+Neo4j 不做备份：它是派生投影，可从 PG 重建（ADR-0001）。
 
 ---
 
-## 七、环境阻塞（如实说明）
+### 6.8 探针与容器实测（本轮新增）
 
 ```
-$ docker info
-failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
+$ curl http://127.0.0.1:8001/ready          # 仓库最新代码
+{"data":{"status":"ready","version":"0.1.0","checks":{
+  "postgres":{"ok":true,"error":null},
+  "neo4j":{"ok":true,"error":null},
+  "migration":{"ok":true,"current":"c7d1e4a92f10","expected":"c7d1e4a92f10","error":null}}}}
 
-$ cmd /c start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-PROGRAM BLOCKED BY SECURITY POLICY - The sandbox prevented a program on the
-configured Program Blacklist from starting:
-  - wsl.exe (C:\WINDOWS\System32\wsl.exe)
-This block cannot be approved or bypassed from the current command.
+$ curl http://127.0.0.1:8001/ready          # 第二次
+... "meta":{"cached":true}                  # TTL 缓存生效
 ```
 
-本机安全策略把 `wsl.exe` 列入黑名单，Docker Desktop 无法由我启动。**需要评审方手动启动 Docker Desktop**，之后可补齐 6.4–6.6 三节。
+**顺带发现并修掉一个真实缺陷**：`/ready` 首次调用曾报 `postgres: TimeoutError`。
+根因是 `POSTGRES_HOST=localhost` 解析到 IPv6 `::1`，而容器只绑 `127.0.0.1`——连接挂到超时。
+改为 `127.0.0.1` 后首次探测即通过，**全量测试耗时从 294s 降到 72s**（每个连接都在等 IPv6 超时）。
+`.env` / `.env.example` / `docs/deployment.md` 已同步。
+
+**旧容器验证了探针确实在工作**：`fig-api:0.1.0`（镜像内迁移脚本旧于数据库）返回
+
+```json
+"migration":{"ok":false,"current":"c7d1e4a92f10","expected":"bdaf9a0511cb",
+             "error":"database revision does not match head"}
+```
+
+即「代码版本落后于库」会被如实拒绝，而不是假装就绪。
+
+**未完成**：`fig-api:0.1.1` 镜像重建两次均被 Docker Hub 502 阻断
+（`failed to fetch oauth token: Post "https://auth.docker.io/token": Bad Gateway`）。
+宿主机运行已证明同一代码路径可用；容器化重建待 Hub 恢复。
 
 ---
+
+## 七、环境阻塞（已解除）
+
+首轮执行时 Docker 守护进程不可用，`wsl.exe` 被本机安全策略列入黑名单，无法启动 Docker Desktop。
+**评审方手动启动后，本节列出的验证已全部补齐**（见 6.4–6.7）。
+
+残留：CI 工作流需 push 后在 GitHub 上首次运行才能验证。
 
 ## 八、修改文件清单
 
@@ -249,22 +323,22 @@ This block cannot be approved or bypassed from the current command.
 
 ## 九、Phase 0 最终验收申请
 
-申请内容：**请评审方就以下范围给出签署结论（APPROVED / APPROVED WITH CONDITIONS / REJECTED）。**
+申请内容：**请评审方给出签署结论（APPROVED / APPROVED WITH CONDITIONS / REJECTED）。**
 
-**可以现在评审的部分：**
+**本轮已完成并附原始证据：**
 
-1. 五项裁决的实现方式是否符合意图（第二、三节）
-2. 五条部分修复项的最终处理是否可接受（第四节）
-3. 未完成事项的阶段归类是否合理（第五节）
-4. 契约 v1.1 的破坏性变更是否可接受
+1. 五项裁决的实现（第二、三节）
+2. 五条部分修复项的最终处理（第四节）
+3. 迁移执行 + 模型一致性（6.4）
+4. 证据不可变 9 例（6.5）
+5. 状态转换 52 例（6.6）
+6. 备份恢复演练（6.7）
+7. 全量测试 100 passed / 0 failed
 
-**建议以「有条件通过」处理的部分：**
+**仍有一项未验证（不申请豁免，仅说明）：**
 
-- 迁移 `c7d1e4a92f10` 未在真实库执行 → 条件：Docker 恢复后执行并回填 6.4
-- 34 个 DB/Neo4j 测试未运行 → 条件：回填 6.5、6.6
-- CI 未在 GitHub 运行 → 条件：push 后确认首次流水线结果
-
-**我不申请的：** 把上述三项标记为已完成。
+- CI 工作流未在 GitHub 上运行过。本地已跑通同样的命令序列（ruff → alembic upgrade → alembic check → apply_neo4j_schema → pytest），但流水线本身未经真实执行。
+- `fig-api:0.1.1` 镜像重建被 Docker Hub 502 阻断（宿主机已验证同一代码路径）。
 
 **当前状态（不会被自行修改）：**
 
@@ -272,3 +346,5 @@ This block cannot be approved or bypassed from the current command.
 TASK-007 = review
 Phase 0  = awaiting_review
 ```
+
+签署通过后由评审方指示，我才把 Phase 0 置为 `completed`。

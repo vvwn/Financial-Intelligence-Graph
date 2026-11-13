@@ -62,7 +62,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/backend.Dockerfile
-    image: fig-api:0.1.0
+    image: fig-api:0.1.1
     container_name: fig-api
     restart: unless-stopped
     depends_on:

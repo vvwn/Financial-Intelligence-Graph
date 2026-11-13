@@ -58,8 +58,12 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
-async def ping(timeout_seconds: float = 2.0) -> tuple[bool, str | None]:
-    """Cheap readiness probe. Returns (ok, error_message)."""
+async def ping(timeout_seconds: float = 3.0) -> tuple[bool, str | None]:
+    """Cheap readiness probe. Returns (ok, error_message).
+
+    3s, not 2s: the first asyncpg connection after a cold start (DNS + auth +
+    pool creation) was observed to exceed 2s and produced a spurious 503.
+    """
     import asyncio
 
     async def _probe() -> None:

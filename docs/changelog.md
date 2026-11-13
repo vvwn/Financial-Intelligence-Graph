@@ -44,9 +44,26 @@
 | 备份恢复演练 | ❌ **未执行** |
 | CI | ❌ **未在 GitHub 运行** |
 
-### 阻塞
+### 验证补充（Docker 恢复后）
 
-- B-09：Docker 守护进程不可用，`wsl.exe` 被本机安全策略拦截，无法启动 Docker Desktop。
+| 项 | 结果 |
+|---|---|
+| `alembic upgrade head` | ✅ `bdaf9a0511cb → c7d1e4a92f10` |
+| `alembic check` | ✅ No new upgrade operations detected |
+| 全量 pytest | ✅ **100 passed / 0 failed** |
+| 备份恢复演练 | ✅ PASSED（含真实数据比对） |
+| 探针 | ✅ `/ready` 三检全绿，TTL 缓存生效 |
+
+### 修复
+
+- **`POSTGRES_HOST=localhost` 走 IPv6 导致连接超时**：容器只绑 `127.0.0.1`，`localhost` 解析到 `::1` 后挂起。
+  改为 `127.0.0.1` 后首次探测即通过，全量测试 294s → 72s。
+- `db.ping()` 超时 2s → 3s（冷启动首次建连偏慢）。
+
+### 仍未验证
+
+- CI 未在 GitHub 实际运行
+- `fig-api:0.1.1` 镜像重建被 Docker Hub 502 阻断（宿主机已验证同一代码路径）
 
 ---
 

@@ -43,7 +43,8 @@ async def test_update_excerpt_is_refused(session: AsyncSession, clean_db: None) 
 
 
 async def test_update_grade_is_refused(session: AsyncSession, clean_db: None) -> None:
-    ev = await _one_evidence(session)
+    """Upgrading a C to an A would launder weak evidence into strong; it must fail."""
+    ev = await add_evidence(session, make_evidence("C"))
     await session.commit()
 
     with pytest.raises(DBAPIError):
@@ -100,10 +101,15 @@ async def test_verification_status_may_change(session: AsyncSession, clean_db: N
     )
     await session.commit()
 
-    refreshed = (
-        await session.execute(select(Evidence).where(Evidence.id == ev.id))
+    # Read the column directly: the ORM instance keeps its stale attribute after a
+    # raw UPDATE (expire_on_commit=False), and expiring it would trigger a lazy
+    # load outside the async context.
+    status = (
+        await session.execute(
+            text("SELECT verification_status FROM evidence WHERE id = :id"), {"id": ev.id}
+        )
     ).scalar_one()
-    assert refreshed.verification_status == "verified"
+    assert status == "verified"
 
 
 async def test_correction_via_new_row_is_allowed(session: AsyncSession, clean_db: None) -> None:
