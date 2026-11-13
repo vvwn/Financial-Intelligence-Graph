@@ -4,6 +4,39 @@
 
 ---
 
+## [1.4.0-phase1] — 2026-11-13 · 年报子公司表抽取 + gsxt 评估
+
+### gsxt 结论（不接入）
+
+- `gsxt.gov.cn` 返回 **521 + 瑞数（Riverse）JS 挑战**，需执行混淆 JS 算 cookie，通常还有验证码
+- 绕过属于规避访问控制，不做；方案也极脆弱
+- 即使拿到，gsxt 是工商登记（股东/对外投资/分支机构/年报资产状况），**没有客户/供应商**
+- 唯一不可替代处：非上市股东穿透 → 走合规付费 API，不硬爬
+
+### 新增：年报子公司表抽取
+
+- `app/collectors/cninfo_collector.py`：公告检索 + PDF 下载
+- `app/extractors/annual_report.py`：解析「在其他主体中的权益 → 企业集团的构成」
+- `app/extractors/pdf.py`、`scripts/import_subsidiaries.py`
+- 修正：`latest_annual_report` 曾把「半年度报告」误判为年报（标题含「年度报告」子串）
+
+### 实测（中际旭创 300308）
+
+```
+report: 2025年年度报告 (2026-03-30)
+parsed rows: 26 (clean 26, needs review 0)
+edges created: 26，全部 evidence_grade=A
+projection: nodes=94 edges=80; consistent=True
+depth=1 → nodes 28 edges 27
+```
+
+### 限制
+
+PDF 表格列会被打散，跨行英文名（TeraHop / Pte）可能被拆开；能合并的合并，
+合并不了的标 `needs_review`，不当干净名称入库。26 行实测 0 条待复核。
+
+---
+
 ## [1.3.0-phase1] — 2026-11-13 · 巨潮数据源调查 + 首条真实供应链边
 
 ### 调查结论（详见 `reports/development/datasource-cninfo-investigation.md`）
