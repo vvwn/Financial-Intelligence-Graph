@@ -12,7 +12,7 @@
 | # | 任务 | 状态 | 证据 |
 |---|---|---|---|
 | 1 | I-5 / DISPUTED / 证据独立性落地核验 | ✅ **已验证** | `reports/testing/2026-11-13-invariants.log`（19 项 PASS / 0 FAIL） |
-| 2 | 取得一次真实 GitHub Actions 成功记录 | ✅ **已验证** | run **#2** `success`，见 `reports/testing/github-actions-evidence.md` |
+| 2 | 取得一次真实 GitHub Actions 成功记录 | ✅ **已验证** | run **#3**（最终提交）`success`，见 `reports/testing/github-actions-evidence.md` |
 | 3 | 重建 `fig-api:0.1.1` + 部署 + `/ready` | ✅ **已验证** | `reports/testing/2026-11-13-container-deploy.log` |
 | 4 | 更新最终评审报告 | ✅ 本文件 | — |
 
@@ -129,9 +129,10 @@ PASS  I-12 带反向证据进 disputed 允许  allowed as intended
 | run | commit | 结论 | 失败位置 |
 |---|---|---|---|
 | #1 | `d6b58ec` | ❌ `failure` | backend / **Tests** |
-| #2 | `3f71592` | ✅ **`success`** | — |
+| #2 | `3f71592` | ✅ `success` | — |
+| **#3** | **`46ea361`（最终提交）** | ✅ **`success`**（约 90s） | — |
 
-run #2 逐步结果（全部 success）：
+run #3 / #2 逐步结果（全部 success）：
 
 - **backend**：checkout → uv → Python 3.12 → `uv sync --frozen` → ruff → `alembic upgrade head` → `alembic check` → `apply_neo4j_schema.py` → pytest → 上传测试日志
 - **frontend**：checkout → setup-node → `npm ci` → `tsc --noEmit` → `vitest` → `vite build`
@@ -205,7 +206,7 @@ d91f2b6c4a07
 | 全量测试 | **100 passed / 0 failed** | `reports/testing/2026-11-13-full.log` |
 | 不变量核验（裸 SQL） | **19 passed / 0 failed** | `reports/testing/2026-11-13-invariants.log` |
 | 迁移执行 + 模型一致性 | 成功；`No new upgrade operations detected` | 本报告 §六 |
-| GitHub Actions | run #2 `success`（11 步 + 7 步全绿） | `github-actions-evidence.md` |
+| GitHub Actions | run **#3**（最终提交）`success`，11 步 + 7 步全绿 | `github-actions-evidence.md` |
 | 容器部署 + `/ready` | 三检全绿，缓存生效 | `2026-11-13-container-deploy.log` |
 | 备份恢复演练 | PASSED（含真实数据比对） | `2026-11-13-backup-drill.log` |
 | 静态检查 | All checks passed | `2026-11-13-ruff.log` |
