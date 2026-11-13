@@ -10,7 +10,7 @@
 
 | 状态 | 数量 | 任务 |
 |---|---|---|
-| ✅ completed | 9 | TASK-001, TASK-002, TASK-003, TASK-004, TASK-005, TASK-006, TASK-008, TASK-009, TASK-601 |
+| ✅ completed | 10 | TASK-001~006, TASK-008, TASK-009, TASK-010, TASK-601 |
 | 🟡 in_progress | 0 | — |
 | 🔵 review | 1 | TASK-007（评审方未签署前保持 review） |
 | ⚪ pending | 0 | — |
@@ -138,6 +138,36 @@ unverified: |
     - 全部 db / neo4j 标记的测试（生命周期、证据不可变、投影器）
     - scripts/verify_backup.sh 备份恢复演练
     - CI 工作流未在 GitHub 上实际运行
+```
+
+### TASK-010 · 收尾核验（I-5 / DISPUTED / 独立性 / CI / 容器）
+
+```yaml
+task_id: TASK-010
+agent: architect
+phase: P0
+objective: 只做核验，不新增功能；为最终评审提供可复核证据
+inputs: [TASK-009 产出, 评审方四项最终标准]
+outputs:
+  - scripts/verify_invariants.py（裸 SQL 19 项核验）
+  - 迁移 d91f2b6c4a07（修复 disputed CHECK 的 NULL 语义缺陷）
+  - reports/testing/{2026-11-13-invariants,github-actions-evidence,2026-11-13-container-deploy}.{log,md}
+  - fig-api:0.1.1 部署
+dependencies: [TASK-009]
+acceptance_criteria:
+  - 不变量核验 19/19 PASS
+  - GitHub Actions 有 success 记录（run #2）
+  - 容器 /ready 三检全绿且 head 与库一致
+  - 报告区分 已完成 / 已验证 / 因外部原因暂缓
+test_requirements:
+  - 全量 pytest 100 passed
+status: completed
+completed_at: 2026-11-13
+found_defect: |
+  disputed 的 DB CHECK 用 array_length，空数组返回 NULL，CHECK 视为通过 → 约束从未生效。
+  已由迁移 d91f2b6c4a07 改为 cardinality。ORM 测试无法发现，只有裸 SQL 核验能发现。
+not_done: |
+  未在独立物理机/VM 验证部署（外部环境项，不计代码缺陷）
 ```
 
 ### TASK-003 · PostgreSQL Schema 设计与冻结

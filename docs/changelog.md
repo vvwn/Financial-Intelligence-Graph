@@ -4,6 +4,36 @@
 
 ---
 
+## [0.3.1] — 2026-11-13 · 收尾核验（未新增功能）
+
+### 修复（由核验发现，非推测）
+
+- **`disputed` 的 DB CHECK 从未生效**：`array_length('{}'::uuid[],1)` 返回 NULL，CHECK 遇 NULL 视为通过。
+  迁移 `d91f2b6c4a07` 改用 `cardinality(evidence_ids) >= 1`。
+  这个洞在 ORM 测试下不可见（应用层 `assert_can_dispute` 挡住了），只有裸 SQL 核验能发现。
+
+### 新增
+
+- `scripts/verify_invariants.py`：直连 PG、裸 SQL 撞约束，19 项不变量核验，事务末尾整体回滚（证据不可删）
+- `reports/testing/github-actions-evidence.md`：CI 两次运行（#1 failure / #2 success）的原始证据
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| 全量 pytest | ✅ 100 passed |
+| 不变量核验 | ✅ 19 passed / 0 failed |
+| GitHub Actions | ✅ run #2 success |
+| 容器 `fig-api:0.1.1` | ✅ healthy，`/ready` 三检全绿（head `d91f2b6c4a07`） |
+| `alembic check` | ✅ 无差异 |
+
+### 明确未做
+
+- 未新增业务端点，未进入 Phase 1
+- 未在独立物理机/VM 验证部署（外部环境项）
+
+---
+
 ## [0.3.0] — 2026-11-13 · 执行架构评审裁决
 
 ### 裁决执行

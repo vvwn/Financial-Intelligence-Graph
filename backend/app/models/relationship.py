@@ -157,8 +157,10 @@ class RelationshipHistory(UUIDPrimaryKeyMixin, Base):
             name="trigger_valid",
         ),
         # Entering `disputed` must cite at least one contradicting evidence item.
+        # cardinality(), not array_length(): array_length('{}') is NULL, and a NULL
+        # CHECK expression counts as satisfied — the guard would silently pass.
         CheckConstraint(
-            "to_status <> 'disputed' OR array_length(evidence_ids, 1) >= 1",
+            "to_status <> 'disputed' OR cardinality(evidence_ids) >= 1",
             name="disputed_requires_evidence",
         ),
         Index("ix_relationship_history_rel", "relationship_id", "created_at"),
