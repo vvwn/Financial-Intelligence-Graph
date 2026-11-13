@@ -1,6 +1,6 @@
 # 项目状态
 
-> 最后更新：2026-11-13 19:30 · 维护者：`architect`
+> 最后更新：2026-11-13 20:00 · 维护者：`architect`
 > **状态语义严格区分**：未开始 / 已写代码 / 已运行 / 测试通过 / 已合并 / 已部署 / 已验证实际数据。
 
 ---
@@ -36,10 +36,11 @@
 | 遍历（neighbors/path/subgraph + 深度与节点上限） | ✅ | `test_traversal.py` 8 例 |
 | 读 API（25 个端点） | ✅ | `test_api_graph.py` 9 例；`/openapi.json` 可生成 |
 | 产业分类 16 个 | ✅ | `database/seeds/industries.yaml` |
-| 演示数据（合成 12 公司 / 11 关系） | ✅ | `database/seeds/demo_companies.yaml` |
-| 真实 50–100 家公司 | 🟡 **未做** | 需真实公告证据；不编造 |
-| 全量测试 | ✅ **123 passed** | `reports/testing/2026-11-13-full.log` |
-| 图一致性 | ✅ 12 节点 / 11 边 / `reconcile consistent=True` | 同上 |
+| 真实公司数据（Baostock） | ✅ **51 家** | `database/seeds/ai_compute_universe.yaml` + `import_baostock_universe.py` |
+| 供应链关系（supplies_to） | ❌ **Baostock 无此数据** | 需公告/研报，等 P2 采集 |
+| 演示数据 | 已移除 | 按评审方指示删除 |
+| 全量测试 | ✅ **127 passed** | `reports/testing/2026-11-13-full.log` |
+| 图一致性 | ✅ 66 节点 / 51 边 / `reconcile consistent=True` | 同上 |
 
 交付报告：`reports/development/phase1-delivery.md`
 

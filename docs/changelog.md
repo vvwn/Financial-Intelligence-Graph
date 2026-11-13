@@ -4,6 +4,36 @@
 
 ---
 
+## [1.2.0-phase1] — 2026-11-13 · 接入 Baostock 真实数据
+
+### 新增
+
+- `app/collectors/baostock_collector.py`：真实公司基础信息（代码/名称/上市日期/证监会行业）
+- `database/seeds/ai_compute_universe.yaml`：51 个代码的人工圈定清单（只写代码 + 细分产业 + 理由，名称不手写）
+- `scripts/import_baostock_universe.py`：`--dry-run` 先校验代码，`--apply` 才写库；查不到的代码会被列出
+
+### 变更
+
+- **移除合成演示数据**：`demo_companies.yaml` 删除，`load_seed_data.py` 只装产业分类
+- 产业实体不再携带 `industry_code`（产业不该「属于」自己），改为 `attributes.code`
+
+### 实测
+
+```
+baostock: 51 codes resolved
+companies upserted: 51
+belongs_to_industry edges created: 51
+projection: nodes=66 edges=51; consistent=True
+pytest: 127 passed
+```
+
+### 限制（重要）
+
+Baostock **不提供任何供应链关系**。因此图里只有「公司 → 产业」边，
+没有 `supplies_to` / `upstream_of`。后者必须有真实公告或研报，属 P2。
+
+---
+
 ## [1.1.0-phase1] — 2026-11-13 · Phase 1 图谱底座
 
 ### 新增

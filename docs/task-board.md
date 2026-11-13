@@ -373,7 +373,7 @@ acceptance_criteria:
 test_requirements:
   - 导入幂等；重复导入不产生重复实体
 status: in_progress
-note: 演示数据（合成）已装载；真实 A 股公司数据需真实证据，等 P2 采集或人工录入
+note: 实体层已完成（Baostock 51 家真实公司 + 产业归属边）；供应链关系 Baostock 不提供，等 P2 采集
 ```
 
 ### TASK-601 · Compose + PG/Neo4j 编排

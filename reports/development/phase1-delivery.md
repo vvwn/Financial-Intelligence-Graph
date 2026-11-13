@@ -83,13 +83,37 @@ reconcile: {'expected_edges': 11, 'actual_edges': 11, 'consistent': True}
 
 | 项 | 原因 | 归属 |
 |---|---|---|
-| **真实 50–100 家 A 股公司数据** | 需要真实公告作为 A/B 级证据。给真实公司编造供货关系与「公告原文」正是本项目要防的事，我不会这么做 | TASK-101，等采集器（P2）或人工录入 |
+| **供应链关系（supplies_to / upstream_of）** | Baostock **不提供**任何客户/供应商数据。没有真实公告或研报就无法生成，不编造 | 等 P2 采集器 + 人工核验 |
 | 采集器与 `/news` 等端点 | 属 Phase 2 | TASK-121/122/311 |
 | 规则引擎 13 条 | 属 Phase 3 | TASK-411 |
 | 关系历史（真实迁移轨迹） | 演示数据直接置 verified，无迁移记录 | 随真实数据产生 |
 | 性能基线 | 当前仅 12 节点 / 11 边，压测无意义 | 数据量上来后补 |
 
-**关于演示数据**：所有实体 `attributes.synthetic = true`，证据来源标记 `SYNTHETIC-DEMO 合成样例（非真实公告）`，装载脚本要求 `--i-know-this-is-synthetic` 且拒绝在生产环境运行。这些数据**不能**用于任何真实判断。
+**演示数据已移除**（2026-11-13 19:55）。Baostock 走通后按评审方指示删除：`database/seeds/demo_companies.yaml` 已删，`load_seed_data.py` 只保留产业分类装载。当前库里是 51 家真实 A 股公司。
+
+## 五之二、Baostock 接入结果
+
+| 项 | 结果 |
+|---|---|
+| 连通性 | ✅ 登录成功，51 个代码全部解析 |
+| 提供的数据 | 代码 / 名称 / 上市日期 / 上市状态 / 证监会行业分类 |
+| **不提供的数据** | **任何供应链关系**（无客户、供应商、上下游） |
+| 导入结果 | 51 家公司 + 16 个产业节点 + 51 条 `belongs_to_industry` 边 |
+| 图规模 | 66 节点 / 51 边，`reconcile consistent=True` |
+
+**公司名称由 Baostock 返回，不是我手写的**——这一步自动纠正了我记错的两处：
+`300223` 现名「君正股份」（非北京君正）、`688347` 是「华虹宏力」（非华虹公司）。
+
+**`belongs_to_industry` 的性质要说清**：证监会分类只到 `C39 计算机、通信和其他电子设备制造业` 这一级，
+「中际旭创属于光模块」是本项目的产业划分判断，不是公告事实。因此该关系的 `attributes` 明确写了：
+
+```json
+{"classification_source": "project_taxonomy",
+ "review_status": "pending_human_review",
+ "csrc_industry": "C39计算机、通信和其他电子设备制造业"}
+```
+
+证据 `evidence_grade=B`，摘录原文同时包含证监会分类与本项目划分理由，可复核、可推翻。
 
 ---
 

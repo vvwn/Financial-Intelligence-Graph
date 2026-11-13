@@ -1,0 +1,197 @@
+# AI 算力产业链公司universe（人工圈定，代码由 Baostock 校验）
+#
+# 这里只写「代码 + 归入哪个细分产业 + 一句话理由」。
+# 公司名称、上市日期、证监会行业分类一律从 Baostock 拉取，不手写，避免记错。
+#
+# 归属判断说明：
+#   segment 是本项目的产业划分，不是公告事实，可复核、可修改。
+#   公司的证监会行业分类会另存到 entity.attributes.csrc_industry，供对照。
+#
+# 校验方式：装载脚本逐条查询 Baostock，查不到的代码会被跳过并列出，不静默忽略。
+
+version: 1
+updated_at: "2026-11-13"
+
+companies:
+  # --- GPU / AI 训练芯片 ---
+  - code: sh.688256
+    segment: AI-COMPUTE-GPU
+    rationale: 云端智能芯片与加速卡
+  - code: sh.688041
+    segment: AI-COMPUTE-GPU
+    rationale: 高端处理器（CPU/DCU）
+  - code: sz.300474
+    segment: AI-COMPUTE-GPU
+    rationale: 图形处理芯片
+
+  # --- ASIC / 定制加速 ---
+  - code: sh.688521
+    segment: AI-COMPUTE-ASIC
+    rationale: 芯片定制与半导体 IP
+  - code: sz.300223
+    segment: AI-COMPUTE-ASIC
+    rationale: 嵌入式 CPU 与存储
+
+  # --- 晶圆制造 ---
+  - code: sh.688981
+    segment: AI-COMPUTE-FOUNDRY
+    rationale: 大陆最大晶圆代工
+  - code: sh.688347
+    segment: AI-COMPUTE-FOUNDRY
+    rationale: 特色工艺晶圆代工
+  - code: sh.600460
+    segment: AI-COMPUTE-FOUNDRY
+    rationale: 功率半导体 IDM
+
+  # --- 先进封装 ---
+  - code: sh.600584
+    segment: AI-COMPUTE-PACKAGING
+    rationale: 封测龙头，含先进封装
+  - code: sz.002156
+    segment: AI-COMPUTE-PACKAGING
+    rationale: 封测，绑定海外大客户
+  - code: sh.600667
+    segment: AI-COMPUTE-PACKAGING
+    rationale: 半导体封测与洁净厂房工程
+  - code: sh.688362
+    segment: AI-COMPUTE-PACKAGING
+    rationale: 先进封装与测试
+
+  # --- 半导体设备 ---
+  - code: sz.002371
+    segment: AI-COMPUTE-EQUIPMENT
+    rationale: 刻蚀/薄膜/清洗设备平台
+  - code: sh.688012
+    segment: AI-COMPUTE-EQUIPMENT
+    rationale: 刻蚀设备
+  - code: sh.688072
+    segment: AI-COMPUTE-EQUIPMENT
+    rationale: 薄膜沉积设备
+  - code: sh.688082
+    segment: AI-COMPUTE-EQUIPMENT
+    rationale: 清洗设备
+  - code: sz.300604
+    segment: AI-COMPUTE-EQUIPMENT
+    rationale: 测试设备
+
+  # --- 半导体材料 ---
+  - code: sh.688126
+    segment: AI-COMPUTE-MATERIAL
+    rationale: 大硅片
+  - code: sz.300346
+    segment: AI-COMPUTE-MATERIAL
+    rationale: 电子特气与光刻胶
+  - code: sh.688019
+    segment: AI-COMPUTE-MATERIAL
+    rationale: 抛光液等功能湿电子化学品
+  - code: sz.002409
+    segment: AI-COMPUTE-MATERIAL
+    rationale: 前驱体与电子材料
+
+  # --- AI 服务器 ---
+  - code: sz.000977
+    segment: AI-COMPUTE-SERVER
+    rationale: AI 服务器整机
+  - code: sh.603019
+    segment: AI-COMPUTE-SERVER
+    rationale: 高性能计算与服务器
+  - code: sh.601138
+    segment: AI-COMPUTE-SERVER
+    rationale: 云计算服务器代工与整机
+  - code: sz.000938
+    segment: AI-COMPUTE-SERVER
+    rationale: 服务器与网络设备
+
+  # --- 光模块 ---
+  - code: sz.300308
+    segment: AI-COMPUTE-OPTICAL
+    rationale: 800G 数通光模块
+  - code: sz.300502
+    segment: AI-COMPUTE-OPTICAL
+    rationale: 高速数通光模块
+  - code: sz.300394
+    segment: AI-COMPUTE-OPTICAL
+    rationale: 光器件与光模块配套
+  - code: sz.002281
+    segment: AI-COMPUTE-OPTICAL
+    rationale: 光模块与光器件
+  - code: sz.300548
+    segment: AI-COMPUTE-OPTICAL
+    rationale: 光模块与光芯片封装
+
+  # --- 光器件 / 光芯片 ---
+  - code: sh.688498
+    segment: AI-COMPUTE-OPTICAL-DEVICE
+    rationale: 光芯片（DFB/EML）
+  - code: sz.300570
+    segment: AI-COMPUTE-OPTICAL-DEVICE
+    rationale: 光无源器件
+  - code: sh.688313
+    segment: AI-COMPUTE-OPTICAL-DEVICE
+    rationale: 光芯片与光器件
+
+  # --- 交换机 ---
+  - code: sz.000063
+    segment: AI-COMPUTE-SWITCH
+    rationale: 数据中心交换机与算力设备
+  - code: sz.002396
+    segment: AI-COMPUTE-SWITCH
+    rationale: 数据中心交换机
+
+  # --- PCB / 覆铜板 ---
+  - code: sz.002463
+    segment: AI-COMPUTE-PCB
+    rationale: 高多层通信板与 AI 服务器板
+  - code: sz.002916
+    segment: AI-COMPUTE-PCB
+    rationale: 高多层板与封装基板
+  - code: sh.600183
+    segment: AI-COMPUTE-PCB
+    rationale: 覆铜板材料
+  - code: sz.002938
+    segment: AI-COMPUTE-PCB
+    rationale: PCB 制造
+
+  # --- 液冷与温控 ---
+  - code: sz.002837
+    segment: AI-COMPUTE-COOLING
+    rationale: 数据中心温控与液冷
+  - code: sz.301018
+    segment: AI-COMPUTE-COOLING
+    rationale: 数据中心专用空调与液冷
+
+  # --- 电源与配电 ---
+  - code: sz.002335
+    segment: AI-COMPUTE-POWER
+    rationale: 数据中心 UPS 与储能
+  - code: sz.002518
+    segment: AI-COMPUTE-POWER
+    rationale: UPS 与数据中心电源
+  - code: sz.300593
+    segment: AI-COMPUTE-POWER
+    rationale: 特种电源模块
+  - code: sz.300820
+    segment: AI-COMPUTE-POWER
+    rationale: 特种电源与电气设备（Baostock 分类为 C38 电气机械）
+
+  # --- 连接器与线缆 ---
+  - code: sz.002475
+    segment: AI-COMPUTE-CONNECTOR
+    rationale: 高速连接器与线缆组件
+  - code: sz.002130
+    segment: AI-COMPUTE-CONNECTOR
+    rationale: 高速通信线缆与材料
+  - code: sh.688668
+    segment: AI-COMPUTE-CONNECTOR
+    rationale: 高速连接器组件
+
+  # --- 数据中心 ---
+  - code: sz.300442
+    segment: AI-COMPUTE-IDC
+    rationale: 智算中心建设与运营
+  - code: sz.300738
+    segment: AI-COMPUTE-IDC
+    rationale: IDC 与算力服务
+  - code: sh.603881
+    segment: AI-COMPUTE-IDC
+    rationale: 第三方 IDC 运营
