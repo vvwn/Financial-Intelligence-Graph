@@ -39,3 +39,6 @@ Thumbs.db
 
 # ---- WorkBuddy 本地记忆（不入库）----
 .workbuddy-ai/
+
+# 抓取的 PDF / 文本缓存（体积大，不入库）
+.cache/

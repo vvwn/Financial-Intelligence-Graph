@@ -16,6 +16,7 @@ docs/adr or the datasource investigation report).
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -131,12 +132,18 @@ async def latest_annual_report(code: str, *, column: str = "szse") -> Announceme
         return None
     items = await search_announcements(code, org_id, "年度报告", column=column, limit=30)
     # "2026年半年度报告" also contains "年度报告", so the exclusions matter.
-    excluded = ("摘要", "提示性公告", "英文", "半年度", "季度", "问询", "更正")
+    excluded = (
+        "摘要", "提示性公告", "英文", "半年度", "季度", "问询", "更正",
+        "说明会", "通知", "公告", "H股", "摘要",
+    )
     for item in items:
         if any(word in item.title for word in excluded):
             continue
-        if item.title.endswith("年度报告") or "年年度报告" in item.title:
-            return item
+        # The title must actually END with 年度报告 (optionally 全文). A loose
+        # "contains 年年度报告" match picks up 「…年度报告网上说明会的通知」.
+        if not re.search(r"年年度报告(全文)?$", item.title.strip()):
+            continue
+        return item
     return None
 
 

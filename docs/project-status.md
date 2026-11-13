@@ -1,6 +1,6 @@
 # 项目状态
 
-> 最后更新：2026-11-13 22:05 · 维护者：`architect`
+> 最后更新：2026-11-13 23:20 · 维护者：`architect`
 > **状态语义严格区分**：未开始 / 已写代码 / 已运行 / 测试通过 / 已合并 / 已部署 / 已验证实际数据。
 
 ---
@@ -47,7 +47,8 @@
 | 东财评估 + 五源总账 | ✅ 完成 | `reports/development/datasource-eastmoney-assessment.md` |
 | 演示数据 | 已移除 | 按评审方指示删除 |
 | 全量测试 | ✅ **127 passed** | `reports/testing/2026-11-13-full.log` |
-| 图一致性 | ✅ 94 节点 / 80 边 / `reconcile consistent=True` | 同上 |
+| 子公司批量抽取 | ✅ **470 家子公司 / 479 条股权边（47/51 家）** | `reports/development/phase1-path1-subsidiaries.md` |
+| 图一致性 | ✅ **537 节点 / 531 边** / `reconcile consistent=True` | 同上 |
 
 交付报告：`reports/development/phase1-delivery.md`
 

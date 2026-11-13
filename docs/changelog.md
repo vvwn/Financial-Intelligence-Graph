@@ -4,6 +4,39 @@
 
 ---
 
+## [1.7.0-phase1] — 2026-11-13 · 路线 1：批量子公司抽取
+
+### 结果
+
+```
+companies: 51 → 47 家有数据 (92%)
+subsidiary entities: 470
+equity edges: 479
+projection: 537 nodes / 531 edges, reconcile consistent
+```
+
+### 新增
+
+- `app/services/annual_report_import.py`：把单公司导入逻辑抽出，CLI 与批量共用
+- `scripts/import_all_subsidiaries.py`：全量批量，逐家报告解析数/创建数/失败原因
+- `app/extractors/annual_report.py` 增加 **pdfplumber 表格级回退**（处理单元格折行）
+- `app/extractors/related_party.py` + `scripts/collect_related_party.py`：关联交易公告抽具名对手方，建 candidate 待审
+
+### 修掉的 5 个真 bug
+
+1. 章节切片漏进账龄表/前五名客户表 → 建出「第一名」「账龄组合」等假实体
+2. 百分比无 `%` 且列序不同 → 中芯国际等解析 0 行
+3. pdfplumber 在 CJK 间插空格 → 名字不可用
+4. `origin_key` varchar(64) 超长 → 整批崩溃
+5. 回退解析把 `section_found=True` 覆盖成 False → 掩盖真实状态
+
+### 未做
+
+- 关联交易公告**未批量跑**（脚本就绪；假阳性率未知，需先抽查）
+- 中兴通讯（000063）表格格式不支持，仍为 0
+
+---
+
 ## [1.6.0-phase1] — 2026-11-13 · 接入东方财富（实控人 + 核心题材）
 
 ### 可用接口（F10 PageAjax，无需登录）
