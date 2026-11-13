@@ -1,6 +1,7 @@
 """SQLAlchemy models. Every module must be imported here so Alembic sees it."""
 
 from app.models.base import Base
+from app.models.chain import IndustryChainEdge, IndustryChainNode
 from app.models.claim import Claim, ClaimEvidence, ClaimRelationship, EntityMention
 from app.models.entity import (
     CompanyProfile,
@@ -54,6 +55,8 @@ __all__ = [
     "GraphProjectionRun",
     "IdempotencyKey",
     "ImpactPath",
+    "IndustryChainEdge",
+    "IndustryChainNode",
     "IndustryTaxonomy",
     "NewsEvent",
     "NewsRaw",
