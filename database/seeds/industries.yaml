@@ -1,0 +1,105 @@
+# AI 算力产业链分类（种子）
+#
+# 这是产业划分，不是投资建议，也不含任何公司数据。
+# code 规则：AI-COMPUTE-<SEGMENT>，父节点为 AI-COMPUTE。
+# 维护者：architect ｜ 变更需同时更新 database/seeds/ 与 docs
+
+version: 1
+updated_at: "2026-11-13"
+
+industries:
+  - code: AI-COMPUTE
+    name: AI 算力
+    parent_code: null
+    level: 1
+    description: 覆盖从芯片到数据中心的 AI 算力基础设施
+
+  - code: AI-COMPUTE-GPU
+    name: GPU / AI 训练芯片
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 通用并行计算芯片，训练与推理的核心算力来源
+
+  - code: AI-COMPUTE-ASIC
+    name: ASIC / 定制加速芯片
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 面向特定模型的定制加速方案
+
+  - code: AI-COMPUTE-FOUNDRY
+    name: 晶圆制造
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 先进制程代工
+
+  - code: AI-COMPUTE-PACKAGING
+    name: 先进封装
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 2.5D/3D 封装、CoWoS 类工艺
+
+  - code: AI-COMPUTE-EQUIPMENT
+    name: 半导体设备
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 光刻、刻蚀、薄膜、量测等
+
+  - code: AI-COMPUTE-MATERIAL
+    name: 半导体材料
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 硅片、光刻胶、电子特气、靶材
+
+  - code: AI-COMPUTE-SERVER
+    name: AI 服务器
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 整机与整机柜
+
+  - code: AI-COMPUTE-OPTICAL
+    name: 光模块
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 400G/800G/1.6T 数通光模块
+
+  - code: AI-COMPUTE-OPTICAL-DEVICE
+    name: 光器件与光芯片
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 激光器、探测器、光引擎、无源器件
+
+  - code: AI-COMPUTE-SWITCH
+    name: 交换机
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 数据中心交换机与交换芯片
+
+  - code: AI-COMPUTE-PCB
+    name: PCB / 覆铜板
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 高多层板、HDI、高频高速材料
+
+  - code: AI-COMPUTE-COOLING
+    name: 液冷与温控
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 冷板式/浸没式液冷、机房温控
+
+  - code: AI-COMPUTE-POWER
+    name: 电源与配电
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 服务器电源、UPS、配电柜、母线
+
+  - code: AI-COMPUTE-CONNECTOR
+    name: 连接器与线缆
+    parent_code: AI-COMPUTE
+    level: 2
+    description: 高速连接器、铜缆、背板连接
+
+  - code: AI-COMPUTE-IDC
+    name: 数据中心
+    parent_code: AI-COMPUTE
+    level: 2
+    description: IDC 建设与运营、算力租赁

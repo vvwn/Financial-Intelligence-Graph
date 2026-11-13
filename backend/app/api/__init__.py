@@ -9,6 +9,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.api import admin, entities, evidence, graph, relationships
+
 api_router = APIRouter()
+api_router.include_router(entities.router)
+api_router.include_router(evidence.router)
+api_router.include_router(relationships.router)
+api_router.include_router(graph.router)
+api_router.include_router(admin.router)
 
 __all__ = ["api_router"]

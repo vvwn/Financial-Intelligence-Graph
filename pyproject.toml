@@ -5,7 +5,13 @@ extend-exclude = ["database/migrations/versions", "frontend", ".venv"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-ignore = ["E501"]
+ignore = [
+    "E501",
+    # FastAPI's dependency-injection idiom is Depends() in the signature default.
+    "B008",
+    # Envelope uses typing.Generic so it works with response_model in this pydantic version.
+    "UP046",
+]
 
 [tool.pytest.ini_options]
 # One test root for the whole repo. Previously testpaths pointed at backend/tests

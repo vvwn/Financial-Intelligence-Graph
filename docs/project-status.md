@@ -1,14 +1,17 @@
 # 项目状态
 
-> 最后更新：2026-11-13 18:20 · 维护者：`architect`
+> 最后更新：2026-11-13 19:30 · 维护者：`architect`
 > **状态语义严格区分**：未开始 / 已写代码 / 已运行 / 测试通过 / 已合并 / 已部署 / 已验证实际数据。
 
 ---
 
 ## 一、当前阶段
 
-**Phase 0 — 架构设计与可行性验证**（裁决已执行，**等待评审方签署**）
-状态：`awaiting_review`（TASK-007 保持 review）
+**Phase 0 — 已完成** ｜ **Phase 1 — 进行中**
+
+- Phase 0 关闭依据：评审方 2026-11-13 19:19 指令「推进 Phase 1」（原文），视为授权进入下一阶段。
+  **未收到 APPROVED / WITH CONDITIONS 字样，记录中不代拟评审结论。**
+- 已知限制（随 Phase 1 携带）：未在独立物理机/VM 验证 OS 层部署。
 
 | 交付物 | 状态 | 证据 |
 |---|---|---|
@@ -23,8 +26,22 @@
 | **`reports/development/phase0-architecture-review.md`** | ✅ **v3 已提交，待签署** | 三类清单（已完成/已验证/暂缓）+ 19 项不变量核验 + CI 记录 |
 | 代码 | ✅ 骨架 + **3 个迁移** + 状态守卫 + 投影原语 | **全量 100 passed / 不变量核验 19 passed** |
 
-**Phase 0 未完成的部分**：仅剩评审方签字。迁移、全量测试、不变量核验、CI、容器部署、备份演练均已执行并留原始日志。
-状态保持 `awaiting_review`，不置 `completed`。
+**Phase 1 目标**：AI 算力产业链图谱底座 —— 能查公司、查上下游、看证据、可重建、可追溯。
+
+### Phase 1 进度（2026-11-13 19:30）
+
+| 项 | 状态 | 证据 |
+|---|---|---|
+| 完整投影器（full/incremental/剪枝/reconcile） | ✅ | `test_projector_rebuild.py` 6 例 |
+| 遍历（neighbors/path/subgraph + 深度与节点上限） | ✅ | `test_traversal.py` 8 例 |
+| 读 API（25 个端点） | ✅ | `test_api_graph.py` 9 例；`/openapi.json` 可生成 |
+| 产业分类 16 个 | ✅ | `database/seeds/industries.yaml` |
+| 演示数据（合成 12 公司 / 11 关系） | ✅ | `database/seeds/demo_companies.yaml` |
+| 真实 50–100 家公司 | 🟡 **未做** | 需真实公告证据；不编造 |
+| 全量测试 | ✅ **123 passed** | `reports/testing/2026-11-13-full.log` |
+| 图一致性 | ✅ 12 节点 / 11 边 / `reconcile consistent=True` | 同上 |
+
+交付报告：`reports/development/phase1-delivery.md`
 
 ---
 

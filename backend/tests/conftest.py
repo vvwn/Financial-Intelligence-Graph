@@ -43,17 +43,21 @@ _MUTABLE_TABLES = (
 
 
 @pytest.fixture(autouse=True)
-async def _reset_neo4j_driver() -> AsyncIterator[None]:
-    """The Neo4j driver is a module-level singleton bound to one event loop.
+async def _reset_singletons() -> AsyncIterator[None]:
+    """Neo4j driver and SQLAlchemy engine are module-level singletons bound to one loop.
 
     pytest-asyncio gives each test its own loop, so a driver created in test A
     raises "Event loop is closed" in test B. Closing after every test forces a
     fresh driver per loop.
     """
+    from app.core import db
     from app.core.neo4j import close
 
     yield
     await close()
+    # Same reason for the SQLAlchemy engine: the app-level singleton would be
+    # bound to a loop that no longer exists in the next test.
+    await db.dispose()
 
 
 @pytest.fixture

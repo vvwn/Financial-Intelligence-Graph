@@ -10,9 +10,9 @@
 
 | 状态 | 数量 | 任务 |
 |---|---|---|
-| ✅ completed | 10 | TASK-001~006, TASK-008, TASK-009, TASK-010, TASK-601 |
-| 🟡 in_progress | 0 | — |
-| 🔵 review | 1 | TASK-007（评审方未签署前保持 review） |
+| ✅ completed | 15 | TASK-001~010, TASK-102, TASK-202, TASK-203, TASK-211, TASK-601 |
+| 🟡 in_progress | 1 | TASK-101（真实数据待证据来源） |
+| 🔵 review | 0 | — |
 | ⚪ pending | 0 | — |
 | 🔴 blocked | 0 | — |
 
@@ -291,8 +291,9 @@ acceptance_criteria:
   - 风险清单含概率/影响/缓解
   - 明确列出"本阶段没做的事"
 test_requirements: []
-status: review
-note: 报告已提交 reports/development/phase0-architecture-review.md，等待独立评审
+status: completed
+completed_at: 2026-11-13
+close_basis: 评审方 2026-11-13 19:19 指令「推进 Phase 1」（未给出 APPROVED 字样，未代拟结论）
 ```
 
 ---
@@ -347,7 +348,8 @@ acceptance_criteria:
 test_requirements:
   - 幂等测试、重建等价测试、状态隔离测试、下线测试
   - 10 万关系规模性能基线记录
-status: pending
+status: completed
+completed_at: 2026-11-13
 ```
 
 ### TASK-101 · AI 算力产业链种子数据
@@ -370,7 +372,8 @@ acceptance_criteria:
   - 无证据的产业链关系不入库（或标 candidate）
 test_requirements:
   - 导入幂等；重复导入不产生重复实体
-status: pending
+status: in_progress
+note: 演示数据（合成）已装载；真实 A 股公司数据需真实证据，等 P2 采集或人工录入
 ```
 
 ### TASK-601 · Compose + PG/Neo4j 编排

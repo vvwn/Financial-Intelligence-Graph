@@ -1,21 +1,25 @@
 """The only writer of Neo4j (ADR-0001).
 
-Scope of this module today: project ONE relationship (with its two endpoints) and
-remove it. The full incremental/full projector (TASK-202) builds on these two
-primitives; keeping them small makes the "graph is a projection" claim testable now.
+Two entry points:
+
+* `project_relationship` — project one relationship and its endpoints (event-driven
+  updates, tests).
+* `project_all` — full or incremental sweep, recorded in `graph_projection_run`,
+  which also prunes edges that no longer qualify.
 
 Invariants enforced here:
   - candidate-layer types (POTENTIAL_*) are refused before any Cypher runs
   - only PROJECTABLE_STATUSES reach the graph
-  - `disputed` is projected, but with status='disputed' so consumers cannot mistake
-    it for established fact
+  - `disputed` is projected with its own status, never as established fact
   - MERGE everywhere, so projecting twice is a no-op
+  - `stock_code` is written on the node, otherwise the uniqueness constraint is inert
 """
 
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +28,9 @@ from app.core.errors import AppError, ErrorCode
 from app.core.neo4j import get_driver
 from app.models.entity import Entity
 from app.models.evidence import Evidence
+from app.models.ops import GraphProjectionRun
 from app.models.relationship import Relationship, RelationshipEvidence
+from app.schemas.enums import PROJECTABLE_STATUSES
 from app.validation.state_guard import assert_projectable
 
 #: entity_type -> Neo4j sub-label. Whitelisted: labels cannot be parameterised.
@@ -78,6 +84,16 @@ class ProjectionResult:
     edges: int = 0
 
 
+@dataclass
+class SweepResult:
+    run_id: str
+    mode: str
+    nodes: int = 0
+    edges_projected: int = 0
+    edges_removed: int = 0
+    skipped: list[str] = field(default_factory=list)
+
+
 def should_project(relationship_type: str, status: str) -> tuple[bool, str]:
     """Cheap pre-check used by both the projector and the QA rules."""
     try:
@@ -99,21 +115,118 @@ def _node_props(entity: Entity) -> dict:
     }
 
 
-async def _evidence_stats(session: AsyncSession, relationship_id: uuid.UUID) -> tuple[int, str | None]:
-    """(independent origin count, strongest grade). Reposts of one origin count once."""
+async def _evidence_stats(
+    session: AsyncSession, relationship_id: uuid.UUID
+) -> tuple[int, int, str | None]:
+    """(independent supporting origins, contradicting origins, strongest grade)."""
     stmt = (
         select(
+            RelationshipEvidence.relation,
             func.count(func.distinct(Evidence.origin_key)),
             func.min(Evidence.evidence_grade),
         )
-        .join(RelationshipEvidence, RelationshipEvidence.evidence_id == Evidence.id)
-        .where(
-            RelationshipEvidence.relationship_id == relationship_id,
-            RelationshipEvidence.relation == "supporting",
-        )
+        .join(Evidence, Evidence.id == RelationshipEvidence.evidence_id)
+        .where(RelationshipEvidence.relationship_id == relationship_id)
+        .group_by(RelationshipEvidence.relation)
     )
-    count, best = (await session.execute(stmt)).one()
-    return int(count or 0), best
+    supporting = 0
+    contradicting = 0
+    best: str | None = None
+    for relation, origins, grade in (await session.execute(stmt)).all():
+        if relation == "supporting":
+            supporting = int(origins or 0)
+            best = grade
+        else:
+            contradicting = int(origins or 0)
+    return supporting, contradicting, best
+
+
+async def _build_payload(session: AsyncSession, rel: Relationship) -> dict | None:
+    """Assemble everything the graph needs for one relationship, or None if ineligible."""
+    ok, _ = should_project(rel.relationship_type, rel.status)
+    if not ok:
+        return None
+
+    source = (
+        await session.execute(select(Entity).where(Entity.id == rel.source_entity_id))
+    ).scalar_one_or_none()
+    target = (
+        await session.execute(select(Entity).where(Entity.id == rel.target_entity_id))
+    ).scalar_one_or_none()
+    if source is None or target is None:
+        raise AppError(
+            ErrorCode.NOT_FOUND,
+            "Relationship endpoint is missing",
+            details={"relationship_id": str(rel.id)},
+        )
+
+    for entity in (source, target):
+        if entity.entity_type not in ENTITY_LABELS:
+            raise AppError(
+                ErrorCode.VALIDATION_ERROR,
+                f"entity_type {entity.entity_type} has no Neo4j label",
+                details={"entity_id": str(entity.id)},
+            )
+
+    supporting, contradicting, best_grade = await _evidence_stats(session, rel.id)
+
+    return {
+        "src_uid": str(source.id),
+        "src_props": _node_props(source),
+        "src_label": ENTITY_LABELS[source.entity_type],
+        "tgt_uid": str(target.id),
+        "tgt_props": _node_props(target),
+        "tgt_label": ENTITY_LABELS[target.entity_type],
+        "cypher_type": RELATIONSHIP_TYPE_TO_CYPHER[rel.relationship_type],
+        "rid": str(rel.id),
+        "status": rel.status,
+        "confidence": float(rel.confidence),
+        "valid_from": rel.valid_from.isoformat() if rel.valid_from else None,
+        "valid_to": rel.valid_to.isoformat() if rel.valid_to else None,
+        "evidence_count": supporting,
+        "contradicting_count": contradicting,
+        "best_grade": best_grade,
+        "evidence_missing": supporting == 0,
+    }
+
+
+async def _write_payload(neo, payload: dict, run_id: str) -> None:
+    query = f"""
+    MERGE (s:Entity {{uid: $src_uid}})
+      SET s += $src_props, s:{payload['src_label']},
+          s.projected_at = datetime(), s.projection_run_id = $run_id
+    MERGE (t:Entity {{uid: $tgt_uid}})
+      SET t += $tgt_props, t:{payload['tgt_label']},
+          t.projected_at = datetime(), t.projection_run_id = $run_id
+    MERGE (s)-[r:{payload['cypher_type']} {{rid: $rid}}]->(t)
+      SET r.status = $status,
+          r.confidence = $confidence,
+          r.valid_from = $valid_from,
+          r.valid_to = $valid_to,
+          r.evidence_count = $evidence_count,
+          r.contradicting_count = $contradicting_count,
+          r.evidence_grade_max = $best_grade,
+          r.evidence_missing = $evidence_missing,
+          r.projected_at = datetime()
+    RETURN 1 AS ok
+    """
+    await neo.run(
+        query,
+        src_uid=payload["src_uid"],
+        src_props=payload["src_props"],
+        tgt_uid=payload["tgt_uid"],
+        tgt_props=payload["tgt_props"],
+        rid=payload["rid"],
+        status=payload["status"],
+        confidence=payload["confidence"],
+        valid_from=payload["valid_from"],
+        valid_to=payload["valid_to"],
+        evidence_count=payload["evidence_count"],
+        contradicting_count=payload["contradicting_count"],
+        best_grade=payload["best_grade"],
+        evidence_missing=payload["evidence_missing"],
+        run_id=run_id,
+    )
 
 
 async def project_relationship(
@@ -137,63 +250,130 @@ async def project_relationship(
     if not ok:
         return ProjectionResult(projected=False, reason=reason)
 
-    source = (
-        await session.execute(select(Entity).where(Entity.id == rel.source_entity_id))
-    ).scalar_one()
-    target = (
-        await session.execute(select(Entity).where(Entity.id == rel.target_entity_id))
-    ).scalar_one()
-
-    for entity in (source, target):
-        if entity.entity_type not in ENTITY_LABELS:
-            raise AppError(
-                ErrorCode.VALIDATION_ERROR,
-                f"entity_type {entity.entity_type} has no Neo4j label",
-                details={"entity_id": str(entity.id)},
-            )
-
-    cypher_type = RELATIONSHIP_TYPE_TO_CYPHER[rel.relationship_type]
-    evidence_count, best_grade = await _evidence_stats(session, relationship_id)
-
-    query = f"""
-    MERGE (s:Entity {{uid: $src_uid}})
-      SET s += $src_props, s:{ENTITY_LABELS[source.entity_type]},
-          s.projected_at = datetime(), s.projection_run_id = $run_id
-    MERGE (t:Entity {{uid: $tgt_uid}})
-      SET t += $tgt_props, t:{ENTITY_LABELS[target.entity_type]},
-          t.projected_at = datetime(), t.projection_run_id = $run_id
-    MERGE (s)-[r:{cypher_type} {{rid: $rid}}]->(t)
-      SET r.status = $status,
-          r.confidence = $confidence,
-          r.valid_from = $valid_from,
-          r.valid_to = $valid_to,
-          r.evidence_count = $evidence_count,
-          r.evidence_grade_max = $best_grade,
-          r.evidence_missing = $evidence_missing,
-          r.projected_at = datetime()
-    RETURN 1 AS ok
-    """
+    payload = await _build_payload(session, rel)
+    if payload is None:  # pragma: no cover - should_project already filtered
+        return ProjectionResult(projected=False, reason="ineligible")
 
     driver = get_driver()
     async with driver.session() as neo:
-        await neo.run(
-            query,
-            src_uid=str(source.id),
-            src_props=_node_props(source),
-            tgt_uid=str(target.id),
-            tgt_props=_node_props(target),
-            rid=str(rel.id),
-            status=rel.status,
-            confidence=float(rel.confidence),
-            valid_from=rel.valid_from.isoformat() if rel.valid_from else None,
-            valid_to=rel.valid_to.isoformat() if rel.valid_to else None,
-            evidence_count=evidence_count,
-            best_grade=best_grade,
-            evidence_missing=evidence_count == 0,
-            run_id=run_id or "",
-        )
+        await _write_payload(neo, payload, run_id or "")
 
     return ProjectionResult(projected=True, reason="projected", nodes=2, edges=1)
+
+
+# ---------------------------------------------------------------------------
+# Full / incremental sweep
+# ---------------------------------------------------------------------------
+
+
+async def _eligible_relationships(
+    session: AsyncSession, since: datetime | None
+) -> list[Relationship]:
+    stmt = select(Relationship).where(
+        Relationship.status.in_([s.value for s in PROJECTABLE_STATUSES])
+    )
+    if since is not None:
+        stmt = stmt.where(Relationship.updated_at > since)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def _graph_rids(neo) -> set[str]:
+    result = await neo.run("MATCH ()-[r]->() WHERE r.rid IS NOT NULL RETURN collect(r.rid) AS rids")
+    record = await result.single()
+    return set(record["rids"]) if record else set()
+
+
+async def _clear_graph(neo) -> int:
+    result = await neo.run("MATCH (n:Entity) DETACH DELETE n RETURN count(n) AS n")
+    record = await result.single()
+    return int(record["n"]) if record else 0
+
+
+async def _node_count(neo) -> int:
+    result = await neo.run("MATCH (n:Entity) RETURN count(n) AS n")
+    record = await result.single()
+    return int(record["n"]) if record else 0
+
+
+async def project_all(
+    session: AsyncSession,
+    *,
+    mode: str = "incremental",
+    since: datetime | None = None,
+) -> SweepResult:
+    """Sweep the graph. `full` wipes and rebuilds; `incremental` touches only changed rows.
+
+    Every sweep is recorded in graph_projection_run so a mismatch can be traced
+    back to a specific run.
+    """
+    if mode not in {"full", "incremental"}:
+        raise AppError(
+            ErrorCode.VALIDATION_ERROR, f"unknown projection mode {mode}", details={"mode": mode}
+        )
+
+    run = GraphProjectionRun(mode=mode, started_at=datetime.now(UTC), status="running")
+    session.add(run)
+    await session.flush()
+    run_id = str(run.id)
+    result = SweepResult(run_id=run_id, mode=mode)
+
+    try:
+        driver = get_driver()
+        async with driver.session() as neo:
+            if mode == "full":
+                await _clear_graph(neo)
+
+            relationships = await _eligible_relationships(session, since)
+            eligible_rids: set[str] = set()
+
+            for rel in relationships:
+                payload = await _build_payload(session, rel)
+                if payload is None:
+                    result.skipped.append(str(rel.id))
+                    continue
+                await _write_payload(neo, payload, run_id)
+                eligible_rids.add(payload["rid"])
+                result.edges_projected += 1
+
+            # Prune edges that no longer qualify (e.g. rejected after being verified).
+            stale = set() if mode == "full" else await _graph_rids(neo) - eligible_rids
+            for rid in stale:
+                result.edges_removed += await remove_relationship(uuid.UUID(rid))
+
+            result.nodes = await _node_count(neo)
+
+        run.finished_at = datetime.now(UTC)
+        run.status = "succeeded"
+        run.nodes_upserted = result.nodes
+        run.edges_upserted = result.edges_projected
+        run.edges_removed = result.edges_removed
+        await session.flush()
+        return result
+
+    except Exception as exc:
+        run.finished_at = datetime.now(UTC)
+        run.status = "failed"
+        run.detail = {"error": f"{type(exc).__name__}: {exc}"}
+        await session.flush()
+        raise
+
+
+async def reconcile(session: AsyncSession) -> dict:
+    """Compare what PostgreSQL says should be in the graph with what is there."""
+    eligible = await _eligible_relationships(session, None)
+    expected = {str(r.id) for r in eligible}
+
+    driver = get_driver()
+    async with driver.session() as neo:
+        actual = await _graph_rids(neo)
+
+    return {
+        "expected_edges": len(expected),
+        "actual_edges": len(actual),
+        "missing": sorted(expected - actual),
+        "extra": sorted(actual - expected),
+        "consistent": expected == actual,
+    }
 
 
 async def remove_relationship(relationship_id: uuid.UUID) -> int:
@@ -227,6 +407,15 @@ async def fetch_edge(relationship_id: uuid.UUID) -> dict | None:
     return dict(record) if record else None
 
 
+async def graph_stats() -> dict:
+    driver = get_driver()
+    async with driver.session() as neo:
+        nodes = await _node_count(neo)
+        result = await neo.run("MATCH ()-[r]->() RETURN count(r) AS edges")
+        record = await result.single()
+    return {"nodes": nodes, "edges": int(record["edges"]) if record else 0}
+
+
 async def purge_nodes(uids: list[str]) -> int:
     """Test helper: remove nodes (and their edges) by uid."""
     driver = get_driver()
@@ -244,9 +433,13 @@ __all__ = [
     "PROJECTION_METADATA_KEYS",
     "RELATIONSHIP_TYPE_TO_CYPHER",
     "ProjectionResult",
+    "SweepResult",
     "fetch_edge",
+    "graph_stats",
+    "project_all",
     "project_relationship",
     "purge_nodes",
+    "reconcile",
     "remove_relationship",
     "should_project",
 ]

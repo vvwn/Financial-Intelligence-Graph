@@ -4,6 +4,38 @@
 
 ---
 
+## [1.1.0-phase1] — 2026-11-13 · Phase 1 图谱底座
+
+### 新增
+
+- 投影器：`project_all(mode=full|incremental)` + 剪枝 + `reconcile` + `graph_stats`，每次扫描记 `graph_projection_run`
+- 遍历：`neighbors` / `find_paths` / `subgraph`，深度 ≤5、节点 ≤2000、默认排除 disputed
+- API 25 个端点：entities / companies / industries / graph / relationships（含 5 个生命周期动作）/ evidence / admin
+- 响应模型 `Envelope[T]`，`/openapi.json` 可供前端生成类型
+- 产业分类 16 个（AI 算力链）、合成演示数据 12 公司 / 11 关系
+- `scripts/load_seed_data.py`：`--demo` 需显式确认且拒绝在生产环境运行
+
+### 验证
+
+```
+pytest → 123 passed
+full projection → nodes=12 edges=11
+reconcile → consistent=True
+neighbors depth=6 → 400 DEPTH_LIMIT_EXCEEDED
+path 光器件→数据中心 → depth=3, min_confidence=0.82
+```
+
+### 未做
+
+- 真实 A 股公司数据（需真实证据，不编造）—— TASK-101 进行中
+- 采集器（P2）、规则引擎（P3）
+
+---
+
+## [1.0.0-phase1] — 2026-11-13 · 进入 Phase 1
+
+---
+
 ## [0.3.1] — 2026-11-13 · 收尾核验（未新增功能）
 
 ### 修复（由核验发现，非推测）
