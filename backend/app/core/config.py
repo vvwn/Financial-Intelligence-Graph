@@ -82,6 +82,8 @@ class Settings(BaseSettings):
     # ---- data sources ----
     #: Tushare Pro token. Empty means the Tushare collector is skipped.
     tushare_token: str = ""
+    #: 同花顺 iFinD MCP token. Empty means the iFinD collector is skipped.
+    ifind_mcp_token: str = ""
 
     # ---- llm ----
     llm_default_provider: str = "openai_compatible"

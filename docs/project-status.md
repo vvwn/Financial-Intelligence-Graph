@@ -46,6 +46,8 @@
 | 东方财富接入 | ✅ 51 家：实控人 + 核心题材 | `scripts/enrich_eastmoney.py` |
 | 东财评估 + 五源总账 | ✅ 完成 | `reports/development/datasource-eastmoney-assessment.md` |
 | **iFinD MCP 评估** | ✅ **打通，含产业链上下游** | `reports/development/datasource-ifind-assessment.md` |
+| iFinD 配额实测 | ✅ 1 调用 = 1 次，失败也计费，有节流需求 | `reports/development/ifind-quota-and-first-collection.md` |
+| iFinD 首轮采集 | 🟡 5/15 产业已采上下游 | 同上 |
 | 演示数据 | 已移除 | 按评审方指示删除 |
 | 全量测试 | ✅ **127 passed** | `reports/testing/2026-11-13-full.log` |
 | 子公司批量抽取 | ✅ **470 家子公司 / 479 条股权边（47/51 家）** | `reports/development/phase1-path1-subsidiaries.md` |
