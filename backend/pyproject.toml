@@ -17,6 +17,7 @@ dependencies = [
     "httpx>=0.27,<1.0",
     "tenacity>=9.0,<10.0",
     "python-multipart>=0.0.12",
+    "pypinyin>=0.55.0",
 ]
 
 [dependency-groups]

@@ -1,0 +1,100 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: fig
+          POSTGRES_USER: fig
+          POSTGRES_PASSWORD: fig_ci_password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fig -d fig"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+      neo4j:
+        image: neo4j:5.26-community
+        env:
+          NEO4J_AUTH: neo4j/fig_ci_password
+        ports: ["7687:7687", "7474:7474"]
+        options: >-
+          --health-cmd "wget -qO- http://localhost:7474/ || exit 1"
+          --health-interval 10s --health-timeout 5s --health-retries 12
+
+    env:
+      APP_ENV: development
+      POSTGRES_HOST: localhost
+      POSTGRES_DB: fig
+      POSTGRES_USER: fig
+      POSTGRES_PASSWORD: fig_ci_password
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: fig_ci_password
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.8"
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        working-directory: backend
+        run: uv sync --frozen
+
+      - name: Lint
+        run: backend/.venv/bin/python -m ruff check backend/app backend/tests scripts
+
+      - name: Apply migrations
+        working-directory: backend
+        run: .venv/bin/python -m alembic upgrade head
+
+      - name: Verify models match the database
+        working-directory: backend
+        run: .venv/bin/python -m alembic check
+
+      - name: Apply Neo4j schema
+        run: backend/.venv/bin/python scripts/apply_neo4j_schema.py
+
+      - name: Tests
+        run: backend/.venv/bin/python -m pytest -q
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-log
+          path: reports/testing/
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+      - name: Typecheck
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Unit tests
+        working-directory: frontend
+        run: npm test
+      - name: Build
+        working-directory: frontend
+        run: npm run build

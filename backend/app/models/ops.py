@@ -175,15 +175,43 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_by: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
+class AppSettingHistory(UUIDPrimaryKeyMixin, Base):
+    """Append-only audit of setting changes.
+
+    The evidence threshold decides whether a relationship may even enter review,
+    so its history (version / effective time / who / why) is part of the contract.
+    """
+
+    __tablename__ = "app_setting_history"
+
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    old_value: Mapped[dict | None] = mapped_column(JSONB)
+    new_value: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    old_version: Mapped[int | None] = mapped_column(Integer)
+    new_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str] = mapped_column(String(64), nullable=False)
+    effective_from: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (Index("ix_app_setting_history_key", "key", "created_at"),)
+
+
 __all__ = [
     "AnalysisRun",
     "AppSetting",
+    "AppSettingHistory",
     "GraphProjectionRun",
     "IdempotencyKey",
     "ImpactPath",

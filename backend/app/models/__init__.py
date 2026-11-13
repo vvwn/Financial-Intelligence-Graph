@@ -2,7 +2,13 @@
 
 from app.models.base import Base
 from app.models.claim import Claim, ClaimEvidence, ClaimRelationship, EntityMention
-from app.models.entity import CompanyProfile, Entity, EntityAlias, IndustryTaxonomy
+from app.models.entity import (
+    CompanyProfile,
+    Entity,
+    EntityAlias,
+    EntitySortKeyHistory,
+    IndustryTaxonomy,
+)
 from app.models.evidence import Evidence
 from app.models.news import (
     CollectRun,
@@ -16,6 +22,7 @@ from app.models.news import (
 from app.models.ops import (
     AnalysisRun,
     AppSetting,
+    AppSettingHistory,
     GraphProjectionRun,
     IdempotencyKey,
     ImpactPath,
@@ -30,6 +37,7 @@ from app.models.relationship import (
 __all__ = [
     "AnalysisRun",
     "AppSetting",
+    "AppSettingHistory",
     "Base",
     "Claim",
     "ClaimEvidence",
@@ -40,6 +48,7 @@ __all__ = [
     "DeadLetter",
     "Entity",
     "EntityAlias",
+    "EntitySortKeyHistory",
     "EntityMention",
     "Evidence",
     "GraphProjectionRun",

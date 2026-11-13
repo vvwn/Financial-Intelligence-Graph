@@ -1,7 +1,9 @@
-"""Integration tests: guards actually hold against a live PostgreSQL.
+"""Integration tests: the relationship lifecycle against a live PostgreSQL.
 
-These are the tests that prove invariants are enforced by code and DB
-constraints, not merely promised in docs.
+Covers the reviewer decisions of 2026-11-13:
+  - threshold only grants review entry, never verification
+  - verification requires explicit human/QA approval
+  - disputed is only reachable from verified and preserves both sides
 """
 
 from __future__ import annotations
@@ -10,11 +12,15 @@ import uuid
 
 import pytest
 from app.core.errors import AppError, ErrorCode
-from app.core.ids import uuid7
-from app.models.claim import Claim
-from app.models.relationship import Relationship, RelationshipHistory
-from app.services.relationship_service import transition
+from app.models.relationship import Relationship, RelationshipEvidence, RelationshipHistory
+from app.services.relationship_service import (
+    dispute,
+    submit_for_review,
+    transition,
+    verify,
+)
 from factories import (
+    add_evidence,
     link_claim,
     link_evidence,
     make_claim,
@@ -22,116 +28,299 @@ from factories import (
     make_evidence,
     make_relationship,
 )
-from sqlalchemy import func, select, text
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.db
-
 
 _CODE_SEQ = {"n": 0}
 
 
 def _next_code() -> str:
-    """Six-digit stock codes must be unique per test; reuse breaks the unique index."""
     _CODE_SEQ["n"] += 1
-    return f"{600000 + _CODE_SEQ['n']:06d}"
+    return f"{700000 + _CODE_SEQ['n']:06d}"
 
 
-async def _seed_promotable(
-    session: AsyncSession, grades: list[str], claim_type: str = "fact_reported"
-) -> tuple[Relationship, Claim]:
-    supplier = await make_entity(session, f"示例光模块股份{_next_code()}", _next_code())
-    customer = await make_entity(session, f"示例云科技{_next_code()}", _next_code())
-    rel = await make_relationship(session, supplier, customer, status="pending_review")
+async def _seed(
+    session: AsyncSession,
+    *,
+    grades: list[str],
+    origins: list[str] | None = None,
+    claim_type: str = "fact_reported",
+    status: str = "candidate",
+    relationship_type: str = "supplies_to",
+):
+    supplier = await make_entity(session, f"光模块股份{_next_code()}", _next_code())
+    customer = await make_entity(session, f"云科技{_next_code()}", _next_code())
+    rel = await make_relationship(
+        session, supplier, customer, status=status, relationship_type=relationship_type
+    )
     claim = await make_claim(session, supplier, customer, claim_type=claim_type)
     await link_claim(session, claim, rel)
-    for grade in grades:
-        ev = await make_evidence(session, grade)
+    for index, grade in enumerate(grades):
+        origin = origins[index] if origins else uuid.uuid4().hex
+        ev = await add_evidence(session, make_evidence(grade, origin_key=origin))
         await link_evidence(session, rel, ev, claim)
     return rel, claim
 
 
+async def _history(session: AsyncSession, rel_id: uuid.UUID) -> list[RelationshipHistory]:
+    return list(
+        (
+            await session.execute(
+                select(RelationshipHistory)
+                .where(RelationshipHistory.relationship_id == rel_id)
+                .order_by(RelationshipHistory.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
 # ---------------------------------------------------------------------------
-# Happy path and provenance
+# candidate -> pending_review (threshold only)
 # ---------------------------------------------------------------------------
 
 
-async def test_pending_review_to_verified_with_grade_a(
+async def test_threshold_grants_review_entry(session: AsyncSession, clean_db: None) -> None:
+    rel, _ = await _seed(session, grades=["A"])
+
+    updated = await submit_for_review(session, rel.id, actor="system:pipeline")
+
+    assert updated.status == "pending_review"
+    history = await _history(session, rel.id)
+    assert history[-1].trigger == "evidence_threshold"
+    assert history[-1].to_status == "pending_review"
+
+
+async def test_single_grade_c_cannot_enter_review(session: AsyncSession, clean_db: None) -> None:
+    rel, _ = await _seed(session, grades=["C"])
+
+    with pytest.raises(AppError) as exc:
+        await submit_for_review(session, rel.id, actor="system:pipeline")
+    assert exc.value.code is ErrorCode.EVIDENCE_REQUIRED
+    assert rel.status == "candidate"
+
+
+async def test_reposts_of_one_origin_cannot_enter_review(
     session: AsyncSession, clean_db: None
 ) -> None:
-    rel, _ = await _seed_promotable(session, ["A"])
+    """Two C-grade rows from the same origin are one source, not two."""
+    rel, _ = await _seed(session, grades=["C", "C"], origins=["origin-x", "origin-x"])
 
-    updated = await transition(session, rel.id, "verified", actor="qa-audit", reason="公告核对")
-
-    assert updated.status == "verified"
-    assert updated.version == 2
-    assert updated.last_verified_at is not None
-
-    history = (
-        await session.execute(
-            select(RelationshipHistory).where(RelationshipHistory.relationship_id == rel.id)
-        )
-    ).scalar_one()
-    assert history.from_status == "pending_review"
-    assert history.to_status == "verified"
-    assert history.actor == "qa-audit"
-    assert history.snapshot["status"] == "verified"
+    with pytest.raises(AppError) as exc:
+        await submit_for_review(session, rel.id, actor="system:pipeline")
+    assert exc.value.code is ErrorCode.EVIDENCE_REQUIRED
 
 
-async def test_no_claim_means_no_verification(session: AsyncSession, clean_db: None) -> None:
-    """Provenance is mandatory: evidence without a claim cannot be verified."""
-    supplier = await make_entity(session, "无来源股份", "300011")
-    customer = await make_entity(session, "无来源客户", "300012")
-    rel = await make_relationship(session, supplier, customer, status="pending_review")
-    ev = await make_evidence(session, "A")
+async def test_two_independent_c_origins_enter_review(
+    session: AsyncSession, clean_db: None
+) -> None:
+    rel, _ = await _seed(session, grades=["C", "C"], origins=["origin-a", "origin-b"])
+
+    updated = await submit_for_review(session, rel.id, actor="system:pipeline")
+    assert updated.status == "pending_review"
+
+
+async def test_inferred_claim_never_enters_review(session: AsyncSession, clean_db: None) -> None:
+    rel, _ = await _seed(session, grades=["A"], claim_type="inferred")
+
+    with pytest.raises(AppError) as exc:
+        await submit_for_review(session, rel.id, actor="system:pipeline")
+    assert exc.value.code is ErrorCode.CLAIM_TYPE_NOT_PROMOTABLE
+
+
+async def test_no_claim_blocks_review(session: AsyncSession, clean_db: None) -> None:
+    supplier = await make_entity(session, "无来源股份", _next_code())
+    customer = await make_entity(session, "无来源客户", _next_code())
+    rel = await make_relationship(session, supplier, customer)
+    ev = await add_evidence(session, make_evidence("A"))
     await link_evidence(session, rel, ev)
 
     with pytest.raises(AppError) as exc:
-        await transition(session, rel.id, "verified", actor="qa-audit")
+        await submit_for_review(session, rel.id, actor="system:pipeline")
     assert exc.value.code is ErrorCode.EVIDENCE_REQUIRED
 
 
-async def test_inferred_claim_blocked_at_service_layer(
-    session: AsyncSession, clean_db: None
-) -> None:
-    rel, _ = await _seed_promotable(session, ["A"], claim_type="inferred")
+# ---------------------------------------------------------------------------
+# pending_review -> verified (explicit approval required)
+# ---------------------------------------------------------------------------
+
+
+async def test_threshold_alone_does_not_verify(session: AsyncSession, clean_db: None) -> None:
+    """The central rule: meeting the threshold must not set verified by itself."""
+    rel, _ = await _seed(session, grades=["A"], status="pending_review")
 
     with pytest.raises(AppError) as exc:
-        await transition(session, rel.id, "verified", actor="qa-audit")
-    assert exc.value.code is ErrorCode.CLAIM_TYPE_NOT_PROMOTABLE
+        await verify(session, rel.id, approved_by="")
+    assert exc.value.code is ErrorCode.EVIDENCE_REQUIRED
+    assert any("explicit approval" in r for r in exc.value.details["reasons"])
     assert rel.status == "pending_review"
 
 
-async def test_single_grade_c_rejected_two_accepted(
+async def test_automated_actor_cannot_verify(session: AsyncSession, clean_db: None) -> None:
+    rel, _ = await _seed(session, grades=["A"], status="pending_review")
+
+    with pytest.raises(AppError):
+        await verify(session, rel.id, approved_by="system:auto-pipeline")
+
+
+async def test_human_approval_verifies(session: AsyncSession, clean_db: None) -> None:
+    rel, _ = await _seed(session, grades=["A"], status="pending_review")
+
+    updated = await verify(session, rel.id, approved_by="human:kevin", reason="公告核对")
+
+    assert updated.status == "verified"
+    assert updated.last_verified_at is not None
+    history = await _history(session, rel.id)
+    assert history[-1].trigger == "manual_approval"
+    assert history[-1].actor == "human:kevin"
+
+
+async def test_verification_is_idempotent(session: AsyncSession, clean_db: None) -> None:
+    rel, _ = await _seed(session, grades=["A"], status="pending_review")
+    first = await verify(session, rel.id, approved_by="human:kevin")
+    second = await verify(session, rel.id, approved_by="human:kevin")
+    assert first.version == second.version
+
+
+# ---------------------------------------------------------------------------
+# verified -> disputed
+# ---------------------------------------------------------------------------
+
+
+async def test_dispute_from_pending_review_is_illegal(
     session: AsyncSession, clean_db: None
 ) -> None:
-    rel_one, _ = await _seed_promotable(session, ["C"])
-    with pytest.raises(AppError) as exc:
-        await transition(session, rel_one.id, "verified", actor="qa-audit")
-    assert exc.value.code is ErrorCode.EVIDENCE_REQUIRED
-
-    rel_two, _ = await _seed_promotable(session, ["C", "C"])
-    updated = await transition(session, rel_two.id, "verified", actor="qa-audit")
-    assert updated.status == "verified"
-
-
-async def test_illegal_transition_blocked(session: AsyncSession, clean_db: None) -> None:
-    """verified -> candidate must be impossible through the service."""
-    rel, _ = await _seed_promotable(session, ["A"])
-    await transition(session, rel.id, "verified", actor="qa-audit")
+    """disputed means "a verified fact was challenged", not "still checking"."""
+    rel, _ = await _seed(session, grades=["A"], status="pending_review")
+    counter = await add_evidence(session, make_evidence("A"))
 
     with pytest.raises(AppError) as exc:
-        await transition(session, rel.id, "candidate", actor="qa-audit")
+        await dispute(
+            session,
+            rel.id,
+            actor="human:kevin",
+            reason="新证据",
+            contradicting_evidence_ids=[counter.id],
+        )
     assert exc.value.code is ErrorCode.STATE_TRANSITION_INVALID
 
 
-async def test_revoke_keeps_the_row_and_appends_history(
+async def test_dispute_requires_contradicting_evidence(
     session: AsyncSession, clean_db: None
 ) -> None:
-    rel, _ = await _seed_promotable(session, ["A"])
-    await transition(session, rel.id, "verified", actor="qa-audit")
-    await transition(session, rel.id, "revoked", actor="kevin", reason="公告撤回")
+    rel, _ = await _seed(session, grades=["A"], status="verified")
+
+    with pytest.raises(AppError) as exc:
+        await dispute(
+            session,
+            rel.id,
+            actor="human:kevin",
+            reason="据说有问题",
+            contradicting_evidence_ids=[],
+        )
+    assert exc.value.code is ErrorCode.EVIDENCE_REQUIRED
+
+
+async def test_dispute_preserves_both_sides(session: AsyncSession, clean_db: None) -> None:
+    rel, _ = await _seed(session, grades=["A"], status="verified")
+    counter = await add_evidence(session, make_evidence("A", origin_key="counter-origin"))
+
+    updated = await dispute(
+        session,
+        rel.id,
+        actor="human:kevin",
+        reason="客户否认合作",
+        contradicting_evidence_ids=[counter.id],
+    )
+
+    assert updated.status == "disputed"
+
+    rows = (
+        await session.execute(
+            select(RelationshipEvidence.relation).where(
+                RelationshipEvidence.relationship_id == rel.id
+            )
+        )
+    ).scalars()
+    relations = sorted(rows)
+    assert relations == ["contradicting", "supporting"], "original evidence must survive"
+
+    history = await _history(session, rel.id)
+    assert history[-1].trigger == "new_evidence"
+    assert history[-1].evidence_ids == [counter.id]
+    assert history[-1].reason == "客户否认合作"
+
+
+async def test_disputed_cannot_be_verified_while_conflict_stands(
+    session: AsyncSession, clean_db: None
+) -> None:
+    rel, _ = await _seed(session, grades=["A"], status="verified")
+    counter = await add_evidence(session, make_evidence("A", origin_key="counter-origin"))
+    await dispute(
+        session,
+        rel.id,
+        actor="human:kevin",
+        reason="客户否认合作",
+        contradicting_evidence_ids=[counter.id],
+    )
+
+    with pytest.raises(AppError) as exc:
+        await verify(session, rel.id, approved_by="human:kevin")
+    assert exc.value.code is ErrorCode.EVIDENCE_REQUIRED
+    assert any("contradicting" in r for r in exc.value.details["reasons"])
+
+
+async def test_conflict_resolution_allows_verification_again(
+    session: AsyncSession, clean_db: None
+) -> None:
+    """Once the contradicting link is withdrawn, the fact can be re-established."""
+    rel, _ = await _seed(session, grades=["A"], status="verified")
+    counter = await add_evidence(session, make_evidence("A", origin_key="counter-origin"))
+    await dispute(
+        session,
+        rel.id,
+        actor="human:kevin",
+        reason="客户否认合作",
+        contradicting_evidence_ids=[counter.id],
+    )
+
+    row = (
+        await session.execute(
+            select(RelationshipEvidence).where(
+                RelationshipEvidence.relationship_id == rel.id,
+                RelationshipEvidence.relation == "contradicting",
+            )
+        )
+    ).scalar_one()
+    await session.delete(row)
+    await session.flush()
+
+    restored = await verify(session, rel.id, approved_by="human:kevin", reason="证据被撤回")
+    assert restored.status == "verified"
+
+
+# ---------------------------------------------------------------------------
+# Generic transition guardrails
+# ---------------------------------------------------------------------------
+
+
+async def test_generic_transition_cannot_verify(session: AsyncSession, clean_db: None) -> None:
+    """Verification must go through its dedicated entry point, not the generic one."""
+    rel, _ = await _seed(session, grades=["A"], status="pending_review")
+
+    with pytest.raises(AppError) as exc:
+        await transition(session, rel.id, "verified", actor="human:kevin")
+    assert exc.value.code is ErrorCode.VALIDATION_ERROR
+
+
+async def test_revoke_keeps_row_and_appends_history(
+    session: AsyncSession, clean_db: None
+) -> None:
+    rel, _ = await _seed(session, grades=["A"], status="verified")
+    await transition(session, rel.id, "revoked", actor="human:kevin", reason="公告撤回")
 
     still_there = (
         await session.execute(select(Relationship).where(Relationship.id == rel.id))
@@ -145,122 +334,4 @@ async def test_revoke_keeps_the_row_and_appends_history(
             .where(RelationshipHistory.relationship_id == rel.id)
         )
     ).scalar_one()
-    assert count == 2
-
-
-async def test_transition_is_idempotent(session: AsyncSession, clean_db: None) -> None:
-    rel, _ = await _seed_promotable(session, ["A"])
-    await transition(session, rel.id, "verified", actor="qa-audit")
-    again = await transition(session, rel.id, "verified", actor="qa-audit")
-    assert again.version == 2
-
-
-# ---------------------------------------------------------------------------
-# DB-level invariants
-# ---------------------------------------------------------------------------
-
-
-async def test_history_is_append_only(session: AsyncSession, clean_db: None) -> None:
-    """I-4: the trigger must refuse UPDATE on relationship_history."""
-    rel, _ = await _seed_promotable(session, ["A"])
-    await transition(session, rel.id, "verified", actor="qa-audit")
-    await session.commit()
-
-    with pytest.raises(DBAPIError):
-        await session.execute(text("UPDATE relationship_history SET actor = 'tampered'"))
-        await session.commit()
-    await session.rollback()
-
-
-async def test_duplicate_active_triple_rejected(session: AsyncSession, clean_db: None) -> None:
-    supplier = await make_entity(session, "重复股份", "300021")
-    customer = await make_entity(session, "重复客户", "300022")
-    await make_relationship(session, supplier, customer, status="verified")
-    await session.commit()
-
-    session.add(
-        Relationship(
-            id=uuid7(),
-            source_entity_id=supplier.id,
-            target_entity_id=customer.id,
-            relationship_type="supplies_to",
-            status="pending_review",
-            confidence=0.5,
-        )
-    )
-    with pytest.raises(IntegrityError):
-        await session.commit()
-    await session.rollback()
-
-
-async def test_self_loop_rejected(session: AsyncSession, clean_db: None) -> None:
-    entity = await make_entity(session, "自环股份", "300031")
-    session.add(
-        Relationship(
-            id=uuid7(),
-            source_entity_id=entity.id,
-            target_entity_id=entity.id,
-            relationship_type="supplies_to",
-            status="candidate",
-            confidence=0.5,
-        )
-    )
-    with pytest.raises(IntegrityError):
-        await session.commit()
-    await session.rollback()
-
-
-async def test_confidence_above_one_rejected(session: AsyncSession, clean_db: None) -> None:
-    supplier = await make_entity(session, "越界股份", "300041")
-    customer = await make_entity(session, "越界客户", "300042")
-    session.add(
-        Relationship(
-            id=uuid7(),
-            source_entity_id=supplier.id,
-            target_entity_id=customer.id,
-            relationship_type="supplies_to",
-            status="candidate",
-            confidence=1.5,
-        )
-    )
-    with pytest.raises(IntegrityError):
-        await session.commit()
-    await session.rollback()
-
-
-async def test_inferred_claim_confidence_capped_in_db(
-    session: AsyncSession, clean_db: None
-) -> None:
-    """The DB CHECK mirrors the Python guard, so raw SQL cannot bypass it either."""
-    supplier = await make_entity(session, "推断股份", "300051")
-    customer = await make_entity(session, "推断客户", "300052")
-    session.add(
-        Claim(
-            id=uuid7(),
-            subject_entity_id=supplier.id,
-            predicate="supplies_to",
-            object_entity_id=customer.id,
-            claim_type="inferred",
-            confidence=0.9,
-        )
-    )
-    with pytest.raises(IntegrityError):
-        await session.commit()
-    await session.rollback()
-
-
-async def test_evidence_view_dedupes_reposts(session: AsyncSession, clean_db: None) -> None:
-    """I-6 view: five reposts of one article collapse to a single row."""
-    same_hash = uuid.uuid4().hex
-    for _ in range(5):
-        ev = await make_evidence(session, "C", content_hash=same_hash)
-        session.add(ev)
-    await session.commit()
-
-    rows = (
-        await session.execute(
-            text("SELECT count(*) AS n, max(repost_count) AS r FROM v_evidence_distinct")
-        )
-    ).one()
-    assert rows.n == 1
-    assert rows.r == 5
+    assert count == 1

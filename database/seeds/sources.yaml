@@ -1,0 +1,65 @@
+# 信源清单（种子）
+#
+# 字段说明：
+#   source_key          稳定标识，采集器与 run 记录引用它
+#   kind                exchange_announcement / regulator / gov_stats / media_rss / manual
+#   license_note        许可与使用限制；空白 = 尚未核实，禁止上线
+#   fetch_interval_sec  抓取间隔，必须遵守对方频控
+#
+# 状态约定：
+#   verified  已核对许可与访问方式，可接入
+#   pending   已列入计划，许可或接口待核实
+#   blocked   访问受限 / 许可不明，禁止接入
+#
+# 注意：本文件是配置，不是事实来源。真实抓取结果落 news_raw / news_event。
+
+version: 1
+updated_at: "2026-11-13"
+sources:
+  - source_key: sse_announcement
+    name: 上海证券交易所 上市公司公告
+    kind: exchange_announcement
+    base_url: https://www.sse.com.cn/disclosure/listedinfo/announcement/
+    license_note: 公开披露信息，需遵守网站 robots 与访问频控
+    fetch_interval_sec: 900
+    status: pending
+
+  - source_key: szse_announcement
+    name: 深圳证券交易所 上市公司公告
+    kind: exchange_announcement
+    base_url: https://www.szse.cn/disclosure/listed/notice/
+    license_note: 公开披露信息，需遵守网站 robots 与访问频控
+    fetch_interval_sec: 900
+    status: pending
+
+  - source_key: pbc_news
+    name: 中国人民银行 新闻发布
+    kind: regulator
+    base_url: http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html
+    license_note: 政府公开信息
+    fetch_interval_sec: 3600
+    status: pending
+
+  - source_key: csrc_news
+    name: 中国证监会 新闻发布
+    kind: regulator
+    base_url: http://www.csrc.gov.cn/csrc/c100028/common_list.shtml
+    license_note: 政府公开信息
+    fetch_interval_sec: 3600
+    status: pending
+
+  - source_key: stats_gov_cn
+    name: 国家统计局 数据发布
+    kind: gov_stats
+    base_url: https://www.stats.gov.cn/sj/zxfb/
+    license_note: 政府公开信息
+    fetch_interval_sec: 3600
+    status: pending
+
+  - source_key: cninfo_announcement
+    name: 巨潮资讯网 公告
+    kind: exchange_announcement
+    base_url: http://www.cninfo.com.cn/new/commonUrl?url=disclosure/list/notice
+    license_note: 需核实接口使用条款；未核实前不得批量抓取
+    fetch_interval_sec: 900
+    status: blocked

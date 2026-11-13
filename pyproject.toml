@@ -16,6 +16,7 @@ pythonpath = ["backend"]
 addopts = "-q --strict-markers"
 markers = [
     "db: requires a live PostgreSQL (docker compose up -d postgres)",
+    "neo4j: requires a live Neo4j (docker compose up -d neo4j)",
 ]
 
 [tool.mypy]

@@ -10,9 +10,9 @@
 
 | 状态 | 数量 | 任务 |
 |---|---|---|
-| ✅ completed | 8 | TASK-001, TASK-002, TASK-003, TASK-004, TASK-005, TASK-006, TASK-008, TASK-601 |
+| ✅ completed | 9 | TASK-001, TASK-002, TASK-003, TASK-004, TASK-005, TASK-006, TASK-008, TASK-009, TASK-601 |
 | 🟡 in_progress | 0 | — |
-| 🔵 review | 1 | TASK-007 |
+| 🔵 review | 1 | TASK-007（评审方未签署前保持 review） |
 | ⚪ pending | 0 | — |
 | 🔴 blocked | 0 | — |
 
@@ -100,6 +100,44 @@ result: |
   Python 3.12.12 venv（42 包）；pytest 5 passed；PG 16-alpine healthy；
   alembic 链路连通（无 revision）；Neo4j 镜像仍在拉取，容器未起。
   未完成：Neo4j 容器、api/web 容器镜像、备份脚本 —— 不计入本任务。
+```
+
+### TASK-009 · 执行架构评审裁决（disputed / 排序键 / 阈值 / I-5）
+
+```yaml
+task_id: TASK-009
+agent: architect
+phase: P0
+objective: 按评审方 2026-11-13 正式裁决修改契约与实现
+inputs: [reports/development/phase0-architecture-review.md, 评审裁决]
+outputs:
+  - 迁移 c7d1e4a92f10（disputed / 排序键 / origin_key / I-5 触发器 / predicate CHECK）
+  - backend/app/core/sortkey.py + 12 个单测
+  - backend/app/validation/state_guard.py 重写（阈值只入核验、批准必需、disputed 仅自 verified）
+  - backend/app/graph/projector.py（单关系投影 + 删除原语）
+  - backend/tests/test_evidence_immutability.py / test_projector.py / test_relationship_lifecycle.py
+  - scripts/{backup,restore,verify_backup}.sh、scripts/backfill_sort_keys.py
+  - .github/workflows/ci.yml
+  - database/seeds/sources.yaml、tests/fixtures/ 六目录规格
+dependencies: [TASK-007]
+acceptance_criteria:
+  - disputed 语义与迁移矩阵一致（pending_review → disputed 非法）
+  - 阈值不自动 verified，approval 必需
+  - 证据不可变双向测试（合法修正 + 非法改写）
+  - 排序键独立测试（多音字/数字/大小写）
+  - 五条部分修复项各有结论
+test_requirements:
+  - 全部测试重跑并保存原始日志到 reports/testing/
+status: completed
+completed_at: 2026-11-13
+unverified: |
+  Docker 守护进程在本次执行中不可用（wsl.exe 被安全策略拦截，无法启动 Docker Desktop），
+  因此下列验证未能执行，不得视为通过：
+    - alembic upgrade head（迁移 c7d1e4a92f10 未在真实库执行）
+    - alembic check
+    - 全部 db / neo4j 标记的测试（生命周期、证据不可变、投影器）
+    - scripts/verify_backup.sh 备份恢复演练
+    - CI 工作流未在 GitHub 上实际运行
 ```
 
 ### TASK-003 · PostgreSQL Schema 设计与冻结
@@ -349,3 +387,17 @@ evidence: |
 | P3 | 5 | qa-audit 4、qa+graph 1 |
 | P4 | 4 | frontend 4 |
 | P5 | 3 | data-eng 1、industry-ai 1、qa-audit 1 |
+
+---
+
+## 后续阶段任务（本轮未做，按阶段归类）
+
+| 项 | 归类 | 任务 | 说明 |
+|---|---|---|---|
+| 采集器、`/news` 等 P2 端点 | **P2 可完成** | TASK-121/122/311 | 契约已冻结，实现待 P2 |
+| 增量/全量投影调度 | **P1 可完成** | TASK-202 | 本轮只交付单关系投影原语 |
+| 规则引擎 13 条 | **P3 可完成** | TASK-411 | 阈值已可调，规则待实现 |
+| fixture 实际数据（6 目录） | **P1/P3 可完成** | TASK-101 / TASK-413 | 目录与格式已定，数据未填 |
+| 证据不可变的历史数据回填 | **P0 已交付机制** | — | 表为空，无需回填；有数据后跑 `backfill_sort_keys.py` 与证据迁移 |
+| CI 实际运行验证 | **P0 交付文件，未验证** | — | 需 push 后由 GitHub 执行 |
+| 备份恢复演练 | **P0 交付脚本，未验证** | — | 需 Docker 可用后跑 `verify_backup.sh` |

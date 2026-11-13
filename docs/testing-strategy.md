@@ -1,6 +1,6 @@
 # 测试策略
 
-> 版本 **v1.0** · 2026-11-13 · 状态：**frozen**
+> 版本 **v1.1** · 2026-11-13 · 状态：**frozen**
 > 维护者：`qa-audit` ｜ 会签：`architect`
 > 原则：**测试是验收的唯一证据。没有测试输出的「完成」不算完成。**
 
@@ -36,7 +36,7 @@ backend/.venv/Scripts/python.exe -m pytest -m db        # 仅集成测试
 |---|---|---|---|---|---|
 | 1 | 单元测试 | 各模块 | pytest | 核心模块覆盖率 ≥ 80% | 🟡 状态机/守卫已覆盖 |
 | 2 | API 测试 | architect + qa | pytest + httpx | 每端点 1 正常 + 1 异常；错误码与契约一致 | 🟡 系统端点已覆盖 |
-| 3 | 数据库测试 | architect | pytest + 真实 PG | 约束可被触发；迁移 upgrade/downgrade 通过 | ✅ 18 个用例 |
+| 3 | 数据库测试 | architect | pytest + 真实 PG | 约束可被触发；迁移 upgrade/downgrade 通过 | ✅ 含不可变/生命周期用例 |
 | 4 | 图谱查询测试 | graph-eng | pytest + Neo4j | 限深/限点生效；无环爆炸；状态过滤正确 | ⚪ 待 TASK-203 |
 | 5 | Agent 输出 Schema | industry-ai | pytest + Pydantic | 畸形输出 100% 被拦截 | ⚪ 待 TASK-302 |
 | 6 | 关系扩展测试 | graph-eng + ai | pytest | 深度超限报错；`truncated` 正确 | ⚪ 待 TASK-204 |
@@ -98,7 +98,19 @@ backend/.venv/Scripts/python.exe -m pytest -m db        # 仅集成测试
 | 24 | 图中出现 candidate 关系 | I-1 | `assert_projectable` 抛错；投影器准入过滤 | ✅ `test_unverified_statuses_never_project` |
 | 25 | 模型输出缺 `claims` 字段 | Schema 校验 | Pydantic 拦截，记 `parse_error` | 待实现（TASK-302） |
 
-**当前可判定**：11/25 已有自动化覆盖（多为 DB 约束与状态机）；14/25 依赖尚未实现的功能（P2/P3）。
+**当前可判定**：13/25 已有自动化覆盖（多为 DB 约束与状态机）；12/25 依赖尚未实现的功能（P2/P3）。
+
+### 新增专项测试（本轮裁决要求）
+
+| 类别 | 文件 | 覆盖 |
+|---|---|---|
+| 状态转换 | `test_state_guard.py` | 7×7 矩阵、`pending_review → disputed` 非法、`disputed` 仅从 verified 进入 |
+| 阈值语义 | `test_state_guard.py`、`test_relationship_lifecycle.py` | 阈值只授予 pending_review；无 `approved_by` 不得 verified；自动化 actor 拒绝 |
+| 独立性 | 同上 | 同 `origin_key` 多行只算 1 个来源 |
+| 审计 | `test_relationship_lifecycle.py` | `trigger` / `actor` / `reason` / `evidence_ids` 落库；双方证据并存 |
+| 图谱投影 | `test_projector.py` | candidate 不投影、POTENTIAL_* 拒绝、disputed 带状态投影、幂等、`evidence_count` 按 origin 去重 |
+| 证据不可变 | `test_evidence_immutability.py` | 改正文/删除被拒；改 `verification_status` 允许；`supersedes_id` 追加合法、异源与倒序被拒 |
+| 排序键 | `test_sortkey.py` | 拼音、多音字（重庆/银行）、大小写、数字补零、全角折叠、确定性 |
 
 **特别测试（Phase 3 硬门禁）**：撤销 #6 或 #10 的关系后，系统必须
 ① 列出受影响 `impact_path`；② 重算；③ 输出前后 diff；④ 不成立的路径标 `invalidated`。

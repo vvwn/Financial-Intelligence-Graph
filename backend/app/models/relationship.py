@@ -90,6 +90,13 @@ class Relationship(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 
 class RelationshipEvidence(Base):
+    """Both sides of a relationship's evidence.
+
+    `disputed` requires the original supporting evidence to survive alongside the
+    new contradicting evidence. Without the relation column there is nowhere to
+    record which side an item argues for.
+    """
+
     __tablename__ = "relationship_evidence"
 
     relationship_id: Mapped[uuid.UUID] = mapped_column(
@@ -98,12 +105,18 @@ class RelationshipEvidence(Base):
     evidence_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("evidence.id"), primary_key=True
     )
+    relation: Mapped[str] = mapped_column(
+        String(16), primary_key=True, server_default=text("'supporting'")
+    )
     weight: Mapped[float] = mapped_column(
         Numeric(4, 3), nullable=False, server_default=text("1.0")
     )
 
     __table_args__ = (
         CheckConstraint("weight >= 0 AND weight <= 1", name="weight_range"),
+        CheckConstraint(
+            "relation IN ('supporting','contradicting')", name="relation_valid"
+        ),
     )
 
 
@@ -118,6 +131,11 @@ class RelationshipHistory(UUIDPrimaryKeyMixin, Base):
     from_status: Mapped[str | None] = mapped_column(String(20))
     to_status: Mapped[str] = mapped_column(String(20), nullable=False)
     actor: Mapped[str] = mapped_column(String(64), nullable=False)
+    # What caused the move: claim_promotion / evidence_threshold / manual_approval /
+    # new_evidence / rule / migration. Required for disputed (new evidence must be traceable).
+    trigger: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'manual'")
+    )
     reason: Mapped[str | None] = mapped_column(Text)
     evidence_ids: Mapped[list[uuid.UUID]] = mapped_column(
         ARRAY(PgUUID(as_uuid=True)), nullable=False, server_default=text("'{}'")
@@ -132,6 +150,16 @@ class RelationshipHistory(UUIDPrimaryKeyMixin, Base):
         CheckConstraint(
             f"from_status IS NULL OR from_status IN {RELATIONSHIP_STATUSES}",
             name="from_status_valid",
+        ),
+        CheckConstraint(
+            "trigger IN ('claim_promotion','evidence_threshold','manual_approval',"
+            "'new_evidence','rule','migration','manual')",
+            name="trigger_valid",
+        ),
+        # Entering `disputed` must cite at least one contradicting evidence item.
+        CheckConstraint(
+            "to_status <> 'disputed' OR array_length(evidence_ids, 1) >= 1",
+            name="disputed_requires_evidence",
         ),
         Index("ix_relationship_history_rel", "relationship_id", "created_at"),
     )

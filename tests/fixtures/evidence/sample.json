@@ -1,0 +1,14 @@
+[
+  {
+    "evidence_grade": "A",
+    "source_type": "announcement",
+    "source_name": "巨潮资讯",
+    "source_url": "https://example.com/e1",
+    "original_excerpt": "本公司向客户供应高速光模块。",
+    "content_hash": "sha256:sample",
+    "origin_key": "origin-sample-1",
+    "supersedes": null,
+    "syndicated_from": null,
+    "expected": { "independent_of": [] }
+  }
+]

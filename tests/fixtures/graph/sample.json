@@ -1,0 +1,9 @@
+{
+  "nodes": [
+    { "uid": "n1", "entity_type": "listed_company", "name": "示例科技" },
+    { "uid": "n2", "entity_type": "listed_company", "name": "示例云" }
+  ],
+  "edges": [
+    { "rid": "r1", "source": "n1", "target": "n2", "type": "supplies_to", "status": "verified" }
+  ]
+}

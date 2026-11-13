@@ -1,9 +1,8 @@
 # API 契约规范（FIG API Contracts）
 
-> 版本 **v1.0** · 2026-11-13 · 状态：**frozen**
-> 冻结依据：架构决策 2026-11-13（双层结构 + PG 为状态机唯一真源）
+> 版本 **v1.1** · 2026-11-13 · 状态：**frozen**
+> 冻结依据：架构评审裁决 2026-11-13（disputed 批准 / locale=C 保留 / 阈值语义修正 / I-5 落地）
 > 维护者：`architect` ｜ 消费方：`frontend`、`industry-ai`、`graph-eng`、`devops`
-> 冻结后任何变更必须走 `docs/adr/` + `changelog.md` + 版本号递增。
 
 ---
 
@@ -12,184 +11,139 @@
 | 项 | 规定 |
 |---|---|
 | Base path | `/api/v1`（仅业务端点） |
-| 探针 | `/health`、`/ready` **不带版本前缀**，不属于业务契约 |
-| 协议 | HTTPS（生产）/ HTTP（本地） |
-| 编码 | UTF-8，`Content-Type: application/json` |
-| 时间 | ISO 8601 UTC，带 `Z`，如 `2026-11-13T00:20:00Z`。禁止本地时区字符串 |
-| 金额 | 字符串十进制（`"1234567.89"`），禁止 float |
-| ID | UUIDv7 字符串（时间有序），应用侧生成 |
-| 字段命名 | `snake_case` |
-| 未知字段 | 服务端忽略未知请求字段；客户端必须容忍未知响应字段 |
-| 版本策略 | `/v1` 内只做加法。破坏性变更 → `/v2` |
-| 鉴权 | P1–P3 单用户本地部署无鉴权；P4 起 `Authorization: Bearer` |
+| 探针 | `/health`、`/ready` **不带版本前缀** |
+| 时间 | ISO 8601 UTC，带 `Z` |
+| ID | UUIDv7 字符串，应用侧生成 |
+| 金额 | 字符串十进制 |
+| 分页 | 列表端点游标分页；图谱端点不分页（`truncated` 即终态） |
+| 鉴权 | P1–P3 单用户；P4 起 Bearer |
+| 排序 | 名称排序一律用 `name_sort_key`（数据库 `locale=C`，不能按原文排序） |
 
 ---
 
-## 二、双层结构（核心契约）
-
-本项目的关系数据分两层，**跨层的唯一通道是状态迁移**：
+## 二、双层结构与阈值语义（核心契约）
 
 ```mermaid
 graph LR
-    subgraph CAND["候选层（仅 PostgreSQL）"]
-        C1["claim<br/>AI 抽取的主张"]
-        C2["relationship<br/>status ∈ candidate / pending_review / rejected"]
-        C3["POTENTIAL_* 关系类型<br/>永远留在此层"]
-    end
-    subgraph GATE["门禁"]
-        G1["state_guard<br/>+ 证据达标校验"]
-    end
-    subgraph VER["正式图谱（PostgreSQL → Neo4j）"]
-        V1["relationship<br/>status ∈ verified / disputed / expired / revoked"]
-        V2["Neo4j 投影"]
-    end
-
-    C1 -->|"promote"| G1
-    C2 --> G1
-    G1 -->|"通过"| V1
-    G1 -->|"证据不足 / 类型不可提升"| C2
-    V1 --> V2
-    C3 -.->|"永不通过"| G1
+    C["candidate<br/>候选"] -->|"证据达阈值"| P["pending_review<br/>待核验"]
+    P -->|"显式批准 approved_by"| V["verified<br/>已验证"]
+    V -->|"新反向证据"| D["disputed<br/>有争议"]
+    D -->|"冲突消解"| V
+    C --> R["rejected"]
+    P --> R
+    V --> X["expired"]
+    V --> RV["revoked"]
 ```
 
-**三条硬承诺（契约级，不是实现细节）**：
+**四条契约级承诺：**
 
-1. `candidate` / `pending_review` / `rejected` 状态的关系**永不出现在任何 `/graph/*` 响应中**。
-2. `POTENTIAL_*` 四类关系（`potential_beneficiary` / `potential_loser` / `potential_supplier` / `potential_customer`）**永不进入 Neo4j**，只能在候选层端点读到。
-3. 前端展示「未验证」信息时，数据源是 `/claims` 与 `/relationships?status=candidate`，**不是**图谱端点。
+1. **阈值只决定能否进入核验流程，绝不自动置为 verified。**
+   `candidate → pending_review` 只需证据达阈值；`pending_review → verified` 额外需要 `approved_by`（人工或 QA），自动化 actor（`system:` / `auto:` / `pipeline:` 前缀）一律拒绝。
+2. **`disputed` 只能从 `verified` 进入。** 它表示「已验证事实受到新证据挑战」，不是「还在核验」。`pending_review → disputed` 是非法迁移。
+3. `candidate` / `pending_review` / `rejected` 状态的关系**永不出现在任何 `/graph/*` 响应中**；`POTENTIAL_*` 四类关系**永不进入 Neo4j**。
+4. **`disputed` 关系不得作为确定事实参与投资机会传导。** 传导算法只接受 `status = verified` 的边。
 
 ---
 
 ## 三、统一响应信封
 
-### 3.1 成功
+### 3.1 成功 / 失败
 
 ```json
-{
-  "data": {},
-  "meta": {
-    "request_id": "01JCH3X8QK7YV2N5M9P0R4T6WA",
-    "generated_at": "2026-11-13T00:20:00Z"
-  }
-}
+{ "data": {}, "meta": { "request_id": "...", "generated_at": "2026-11-13T00:20:00Z" } }
 ```
-
-- `meta` 必带 `request_id` 与 `generated_at`。
-- 列表端点必带 `next_cursor`；图谱端点必带 `truncated` 与 `node_limit`。
-- 顶层不出现业务字段。
-
-### 3.2 失败
 
 ```json
-{
-  "error": {
-    "code": "EVIDENCE_REQUIRED",
-    "message": "关系缺少达标证据，无法置为 verified",
-    "details": {
-      "relationship_id": "0192...",
-      "reasons": ["weak evidence: best=C, distinct_C=1, need 1x A/B or 2x C"],
-      "required": "1x A/B or 2 distinct C"
-    },
-    "request_id": "01JCH3X8QK7YV2N5M9P0R4T6WA"
-  }
-}
+{ "error": { "code": "EVIDENCE_REQUIRED", "message": "...", "details": {}, "request_id": "..." } }
 ```
 
-- **404 / 405 也走信封**（已实现 `StarletteHTTPException` 处理器）。
-- 不返回堆栈、不返回内部路径、不返回 SQL。
+404 / 405 也走信封（已实现 `StarletteHTTPException` 处理器）。
 
-### 3.3 错误码表（封闭集合）
+### 3.2 错误码（封闭集合）
 
 | HTTP | code | 含义 |
 |---|---|---|
-| 400 | `VALIDATION_ERROR` | 请求体/参数不合法 |
-| 400 | `DEPTH_LIMIT_EXCEEDED` | 深度超上限（>5） |
+| 400 | `VALIDATION_ERROR` | 参数不合法 |
+| 400 | `DEPTH_LIMIT_EXCEEDED` | 深度 > 5 |
 | 400 | `NODE_LIMIT_EXCEEDED` | 节点数超上限 |
 | 401 | `UNAUTHORIZED` | 未认证 |
 | 403 | `FORBIDDEN` | 无权限 |
-| 404 | `NOT_FOUND` | 资源不存在（含未知路由） |
+| 404 | `NOT_FOUND` | 资源不存在 |
 | 409 | `CONFLICT` | 唯一约束冲突 |
-| 409 | `STATE_TRANSITION_INVALID` | 非法状态迁移 / 该关系类型不可入图 |
-| 422 | `EVIDENCE_REQUIRED` | 证据不足或无 Claim 支撑 |
+| 409 | `STATE_TRANSITION_INVALID` | 非法迁移 / 类型不可入图 / 状态不可用于传导 |
+| 422 | `EVIDENCE_REQUIRED` | 证据不足、缺 Claim、缺批准、disputed 缺反向证据 |
 | 422 | `CLAIM_TYPE_NOT_PROMOTABLE` | 该 Claim 类型不可提升 |
-| 429 | `RATE_LIMITED` | 触发限流 |
+| 429 | `RATE_LIMITED` | 限流 |
 | 502 | `UPSTREAM_UNAVAILABLE` | 外部依赖不可用 |
 | 503 | `DEPENDENCY_NOT_READY` | PG / Neo4j / 迁移版本未就绪 |
-| 500 | `INTERNAL_ERROR` | 未分类错误 |
-
-### 3.4 分页与截断
-
-| 端点类型 | 策略 |
-|---|---|
-| 列表（`/news`、`/entities`、`/claims`、`/quality/issues`） | **游标分页**。`limit` 默认 50、最大 200；`meta.next_cursor` 为 `null` 表示结束；排序固定 `created_at DESC, id DESC` |
-| 图谱（`/graph/*`） | **不分页**。一次返回整块子图，`meta.truncated=true` 即**终态**——客户端要更多数据必须缩小范围重新请求，不存在续页游标 |
-
-> 图谱不分页的理由：图的一次渲染需要闭合的邻域，分页会得到断裂的边。用 `depth` / `node_limit` / `min_confidence` 控制规模，比翻页更符合使用方式。
+| 500 | `INTERNAL_ERROR` | 未分类 |
 
 ---
 
-## 四、枚举（唯一真源：`backend/app/schemas/enums.py`）
+## 四、枚举（唯一真源 `backend/app/schemas/enums.py`）
 
-### 4.1 关系状态（7 态）
+### 4.1 关系状态（7 态，语义已区分）
 
-```python
-class RelationshipStatus(StrEnum):
-    CANDIDATE      = "candidate"       # 候选，AI 产出或人工录入
-    PENDING_REVIEW = "pending_review"  # 待核验，已进核验队列
-    VERIFIED       = "verified"        # 已验证，进入图谱
-    DISPUTED       = "disputed"        # 存在冲突证据，双方证据都保留
-    REJECTED       = "rejected"        # 已否定（终态）
-    EXPIRED        = "expired"         # 已过期
-    REVOKED        = "revoked"         # 已撤销（终态，行不删除）
-```
+| 状态 | 含义 | 是否入图 | 是否可用于传导 |
+|---|---|---|---|
+| `candidate` | AI 产出或人工录入，未核验 | ❌ | ❌ |
+| `pending_review` | 证据达阈值，已进核验队列，等人工判断 | ❌ | ❌ |
+| `verified` | 已批准的事实 | ✅ | ✅ |
+| `disputed` | **已验证事实受到新证据挑战**，双方证据并存 | ✅（标注 disputed） | ❌ |
+| `rejected` | 已否定（终态） | ❌ | ❌ |
+| `expired` | 已过期 | ✅ | ❌ |
+| `revoked` | 已撤销（终态，行不删除） | ✅ | ❌ |
 
-> `DISPUTED` 是决策清单之外新增的第 7 态。理由：总任务书第八节要求「存在冲突时必须保留双方证据，不允许 AI 自行选一个版本」。没有这个状态，冲突证据无处安放。**此条已列入评审报告待裁决项。**
-
-### 4.2 合法迁移表（唯一真源，代码见 `validation/state_guard.py`）
+### 4.2 合法迁移表（唯一真源 `validation/state_guard.py`）
 
 | from \ to | candidate | pending_review | verified | disputed | rejected | expired | revoked |
 |---|---|---|---|---|---|---|---|
 | **candidate** | — | ✅ | ❌ | ❌ | ✅ | ❌ | ✅ |
-| **pending_review** | ❌ | — | ✅ | ✅ | ✅ | ❌ | ✅ |
+| **pending_review** | ❌ | — | ✅ | **❌** | ✅ | ❌ | ✅ |
 | **verified** | ❌ | ❌ | — | ✅ | ❌ | ✅ | ✅ |
 | **disputed** | ❌ | ❌ | ✅ | — | ✅ | ❌ | ✅ |
 | **expired** | ❌ | ✅ | ✅ | ❌ | ❌ | — | ✅ |
 | **rejected** | ❌ | ❌ | ❌ | ❌ | — | ❌ | ❌ |
 | **revoked** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | — |
 
-- `verified → candidate` **禁止**。这是反幻觉的核心：已验证事实不能被静默降级。
-- `verified → rejected` **禁止**。否定必须先经 `disputed`，否则证据轨迹被抹掉。
-- `rejected` / `revoked` 是终态，无出边。
-
 ### 4.3 其他枚举
 
-| 枚举 | 取值 |
-|---|---|
-| `ClaimType` | `fact_reported` / `inferred` / `hypothesis` / `disputed` |
-| `EvidenceGrade` | `A` / `B` / `C` / `D` |
-| `NewsEventType` | `policy` `regulation` `earnings` `guidance` `capex` `order` `contract` `capacity` `technology` `product_launch` `m_and_a` `supply_disruption` `price_change` `macro` `geopolitics` `other` |
-| `ImpactDirection` | `positive` / `negative` / `uncertain` |
-| `ImpactPathStatus` | `valid` / `invalidated` / `stale` |
-| `RelationshipType` | 见 `enums.py`，其中 `potential_*` 四类为候选层专用 |
-
-**`EntityType` 已移除 `customer` / `supplier` / `competitor`**：它们是关系角色，不是实体种类，留在枚举里会诱导把「客户」建成实体。
-
-### 4.4 置信度上限（代码与 DB 双重约束）
-
-| claim_type | 上限 |
-|---|---|
-| `fact_reported` | 1.0 |
-| `inferred` | 0.6 |
-| `hypothesis` | 0.3 |
+`ClaimType`：`fact_reported` / `inferred` / `hypothesis` / `disputed`
+`EvidenceGrade`：`A` / `B` / `C` / `D`
+`NewsEventType`：16 值，见 `enums.py`
+`ImpactPathStatus`：`valid` / `invalidated` / `stale`
+`RelationshipHistory.trigger`：`claim_promotion` / `evidence_threshold` / `manual_approval` / `new_evidence` / `rule` / `migration` / `manual`
 
 ---
 
-## 五、提升为 verified 的三个前置条件（全部满足）
+## 五、证据阈值与独立性
 
-1. 关系至少关联 **1 条 Claim**（无 Claim = 无来源，直接 422）。
-2. 所有关联 Claim 的 `claim_type` 必须为 `fact_reported`（任一为 `inferred`/`hypothesis` → 422 `CLAIM_TYPE_NOT_PROMOTABLE`）。
-3. 证据达标：**≥1 条 A/B 级**，或 **≥2 条不同 `content_hash` 的 C 级**。同一文章的多家转载按 1 条计（`content_hash` 去重）。
-4. 若存在 `contradicting` 证据 → 只能进 `disputed`，不得进 `verified`。
+### 5.1 阈值（v1，已生效）
+
+| 项 | 值 |
+|---|---|
+| 达标条件 | **1 条 A/B 级**，或 **2 条 C 级且来自不同 `origin_key`** |
+| 作用 | 只决定 `candidate → pending_review` |
+| 生效版本 | `evidence.threshold_version = "v1"` |
+| 可调参数 | `app_setting`：`evidence.required_grades` / `evidence.min_c_origins` / `evidence.auto_verify`（后者即使为 true 也不能绕过批准） |
+| 变更审计 | `app_setting_history`（key / 旧值 / 新值 / 版本 / 原因 / 操作者 / 生效时间） |
+
+### 5.2 独立性判定（重要修正）
+
+**不同 `content_hash` 不代表独立来源。**
+
+- 每条 `evidence` 必须携带 `origin_key` —— 它标识**原始报道**，不是这一份拷贝。
+- 转载、引用、摘编、同文不同标题：共用同一个 `origin_key`，`syndicated_from_id` 指向首发行。
+- 阈值计数按 `COUNT(DISTINCT origin_key)`，不按 `COUNT(content_hash)`。
+- 视图 `v_evidence_origin` 提供按来源聚合的行数、文本数、最强等级。
+
+### 5.3 验证的前置条件（全部满足）
+
+1. 关系至少关联 1 条 Claim（无 Claim = 无来源 → 422）。
+2. 所有关联 Claim 的 `claim_type = fact_reported`。
+3. 证据达阈值（见 5.1）。
+4. **显式批准**：`approved_by` 非空且不是自动化 actor。
+5. 无未消解的 `contradicting` 证据（有则只能停在 `pending_review`）。
 
 ---
 
@@ -197,76 +151,47 @@ class RelationshipStatus(StrEnum):
 
 ### 6.1 系统（不带版本前缀）
 
-| 方法 | 路径 | 说明 | 阶段 |
+| 方法 | 路径 | 说明 | 状态 |
 |---|---|---|---|
-| GET | `/health` | 存活探针，不查依赖 | ✅ 已实现 |
-| GET | `/ready` | 就绪探针：PG + Neo4j + Alembic 版本，5s TTL 缓存，任一失败 503 | ✅ 已实现 |
-| GET | `/openapi.json` | OpenAPI 3.1 | ✅ 已实现 |
-
-`/ready` 响应：
-
-```json
-{
-  "data": {
-    "status": "ready",
-    "version": "0.1.0",
-    "checks": {
-      "postgres":  { "ok": true, "error": null },
-      "neo4j":     { "ok": true, "error": null },
-      "migration": { "ok": true, "current": "bdaf9a0511cb", "expected": "bdaf9a0511cb", "error": null }
-    }
-  },
-  "meta": { "request_id": "...", "generated_at": "...", "cached": false }
-}
-```
+| GET | `/health` | 存活探针 | ✅ |
+| GET | `/ready` | PG + Neo4j + Alembic 版本，5s TTL 缓存 | ✅ |
+| GET | `/openapi.json` | OpenAPI 3.1 | ✅ |
 
 ### 6.2 采集
 
-| 方法 | 路径 | 说明 | 阶段 |
-|---|---|---|---|
-| POST | `/ingest/run` | 触发采集。**异步**：立即返回 202 + `run_id`，需 `Idempotency-Key` 头 | P2 |
-| GET | `/ingest/runs/{run_id}` | 运行统计（含 per-source 明细） | P2 |
-| GET | `/ingest/sources` | 信源清单 + `last_fetched_at` 水位 + 最近状态 | P2 |
-| GET | `/ingest/dead-letters` | 失败条目（可按 `error_type`、`retryable` 过滤） | P2 |
-| POST | `/ingest/dead-letters/{id}/retry` | 重放一条失败记录 | P2 |
-
-`POST /ingest/run` 请求/响应：
-
-```json
-// request
-{ "source_keys": ["sse_announcement"], "since": "2026-11-12T00:00:00Z" }
-
-// 202 Accepted
-{ "data": { "run_id": "0192...", "status": "running" }, "meta": { } }
-```
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/ingest/run` | 异步触发（202 + `run_id`），需 `Idempotency-Key` |
+| GET | `/ingest/runs/{run_id}` | 运行统计（含 per-source 明细） |
+| GET | `/ingest/sources` | 信源清单 + `last_fetched_at` 水位 |
+| GET | `/ingest/dead-letters` | 失败条目 |
+| POST | `/ingest/dead-letters/{id}/retry` | 重放 |
 
 ### 6.3 新闻
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/news` | `since, until, source_key, event_type, q`，游标分页 |
-| GET | `/news/{id}` | 详情 + 原文快照 + 已抽出的 Claim 摘要 |
+`GET /news`（游标分页）、`GET /news/{id}`
 
 ### 6.4 实体与产业
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/industries` | **产业树**（含层级、`entity_count`），供左栏筛选 |
-| GET | `/entities` | `entity_type, q, industry_code`，游标分页 |
-| GET | `/entities/{id}` | 实体详情（含 aliases、stock_code） |
-| GET | `/entities/{id}/relations` | 该实体的关系（默认只返回 verified，见 `status` 参数） |
-| GET | `/companies` | `industry_code, q` |
-| GET | `/companies/{stock_code}` | 按代码查公司 |
+| GET | `/industries` | 产业树（层级 + `entity_count`） |
+| GET | `/entities` | `entity_type, q, industry_code, sort=name_sort_key` |
+| GET | `/entities/{id}` | 详情（含 aliases、`name_sort_key`） |
+| GET | `/entities/{id}/relations` | 关系（默认只返回 verified） |
+| GET | `/companies`、`/companies/{stock_code}` | 公司查询 |
+
+**排序契约**：`sort` 只接受 `name_sort_key`（默认）。响应同时返回 `canonical_name` 与 `name_sort_key`，前端不得自行按原文排序——数据库 collation 为 C，原文排序对中文是字节序。
 
 ### 6.5 证据
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/evidence` | **写入证据**（Agent 落地 `evidence_refs` 的唯一入口）。`original_excerpt` 必填，`content_hash` 由服务端按正文计算 |
-| GET | `/evidence/{id}` | 单条证据 |
-| GET | `/relationships/{id}/evidence` | 该关系的全部证据（含等级、来源、摘录、发布时间） |
+| POST | `/evidence` | 写入证据。`origin_key` 必填；转载需带 `syndicated_from_id` |
+| GET | `/evidence/{id}` | 单条 |
+| GET | `/relationships/{id}/evidence` | 该关系全部证据（含 `relation` 区分正反） |
 
-`Evidence` 对象（前后端共用，字段固定）：
+`Evidence` 对象：
 
 ```json
 {
@@ -275,117 +200,74 @@ class RelationshipStatus(StrEnum):
   "source_name": "巨潮资讯",
   "source_url": "https://...",
   "title": "关于签订重大合同的公告",
-  "original_excerpt": "公司与XX签订高速光模块供货合同，金额 3.2 亿元。",
+  "original_excerpt": "……",
   "published_at": "2026-11-10T00:00:00Z",
   "collected_at": "2026-11-12T03:00:00Z",
   "evidence_grade": "A",
   "verification_status": "unverified",
   "content_hash": "sha256:...",
-  "repost_count": 1
+  "origin_key": "origin-abc",
+  "syndicated_from_id": null,
+  "supersedes_id": null
 }
 ```
+
+**不可变性（I-5）**：`original_excerpt` / `content_hash` / `origin_key` / `source_*` / `evidence_grade` / 时间戳一经写入不可 UPDATE；任何 DELETE 被拒。修正 = 新增一行 + `supersedes_id`（须同 `origin_key`、且不早于原行）。唯一允许的 UPDATE 是 `verification_status`。
 
 ### 6.6 图谱（只读，只含已验证层）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/graph/subgraph` | 首屏子图。`industry_code, entity_types[], status, min_confidence, node_limit≤2000` |
-| GET | `/graph/neighbors` | `node_id, direction=up\|down\|both, depth≤5, relation_types[], min_confidence` |
-| POST | `/graph/expand` | 受限扩展，返回 `expansion_id` |
-| GET | `/graph/path` | `from, to, max_depth≤5` |
+| GET | `/graph/subgraph` | 首屏子图，`node_limit ≤ 2000` |
+| GET | `/graph/neighbors` | `direction, depth ≤ 5, relation_types, min_confidence` |
+| POST | `/graph/expand` | 受限扩展 |
+| GET | `/graph/path` | `from, to, max_depth ≤ 5` |
 
-`/graph/subgraph` 与 `/graph/neighbors` 共用同一响应结构：
+- `status` 只作用于边。
+- 默认只返回 `verified`；`include_disputed=true` 才含 `disputed`（前端必须用虚线 + 「有争议」标签区分）。
+- `truncated=true` 即终态，无续页游标。
+- v1 无 `as_of` 参数。
+
+### 6.7 关系生命周期（状态迁移）
+
+| 方法 | 路径 | 从 → 到 | 前置条件 |
+|---|---|---|---|
+| POST | `/relationships/{id}/submit-review` | candidate → pending_review | 证据达阈值 + 有 Claim |
+| POST | `/relationships/{id}/verify` | pending_review → verified | 阈值 + `approved_by` + 无反向证据 |
+| POST | `/relationships/{id}/dispute` | **verified → disputed** | `contradicting_evidence_ids` 非空 |
+| POST | `/relationships/{id}/reject` | candidate/pending/disputed → rejected | 终态 |
+| POST | `/relationships/{id}/revoke` | 任意非终态 → revoked | 终态，行不删除 |
+| GET | `/relationships` | — | `?status=candidate` 为候选层读取入口 |
+| GET | `/history/relationships/{id}` | — | 每次迁移含 `trigger` / `actor` / `reason` / `evidence_ids` |
+
+`verify` 请求体：
 
 ```json
-{
-  "data": {
-    "center": "0192a1b2-...",
-    "nodes": [
-      { "id": "0192a1b2-...", "entity_type": "listed_company", "name": "示例科技",
-        "stock_code": "300001", "industry_code": "AI-COMPUTE-OPTICAL" }
-    ],
-    "edges": [
-      {
-        "relationship_id": "0192c3d4-...",
-        "source": "0192a1b2-...",
-        "target": "0192e5f6-...",
-        "relationship_type": "supplies_to",
-        "status": "verified",
-        "confidence": 0.82,
-        "valid_from": "2024-03-01T00:00:00Z",
-        "valid_to": null,
-        "evidence_count": 3,
-        "evidence_grade_max": "A",
-        "evidence_missing": false
-      }
-    ]
-  },
-  "meta": {
-    "request_id": "01J...",
-    "generated_at": "2026-11-13T00:20:00Z",
-    "truncated": true,
-    "node_limit": 300,
-    "depth_used": 2
-  }
-}
+{ "approved_by": "human:kevin", "reason": "公告核对", "evidence_ids": ["0192..."] }
 ```
 
-**`status` 只作用于边，不作用于节点**。节点没有状态——只有实体是否存在。`include_disputed=true` 才返回 disputed 边；`revoked` 边仅 admin 可见。
+`dispute` 请求体：
 
-**`as_of` 参数在 v1 中不存在。** 时态查询（某时间点的图）推迟到 P4 评估，理由见 `docs/adr/`。不要再在客户端传这个参数。
+```json
+{ "actor": "human:kevin", "reason": "客户否认合作", "contradicting_evidence_ids": ["0192..."] }
+```
 
-### 6.7 关系（状态迁移）
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/relationships` | `status, relationship_type, entity_id`。**候选层读取入口**：`?status=candidate` 用于前端展示「未验证」 |
-| GET | `/relationships/{id}` | 详情 + 证据 + 历史摘要 |
-| GET | `/history/relationships/{id}` | 历史版本全量 |
-| POST | `/relationships/{id}/submit-review` | `candidate → pending_review` |
-| POST | `/relationships/{id}/verify` | `pending_review → verified`，需 `actor, reason` |
-| POST | `/relationships/{id}/dispute` | `→ disputed`，需 `actor, reason, evidence_ids[]` |
-| POST | `/relationships/{id}/reject` | `→ rejected`，需 `actor, reason` |
-| POST | `/relationships/{id}/revoke` | `→ revoked`，需 `actor, reason`（**不删除**） |
-
-> **没有 `POST /relationships`，也没有 `DELETE`。** 关系只能由 Claim 提升产生，只能状态迁移消亡。
+> 没有 `POST /relationships`，没有 `DELETE`。关系只能由 Claim 提升产生，只能状态迁移消亡。
 
 ### 6.8 Claim（候选层）
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/analyze/news/{id}` | 触发分析，幂等（同 `news_id` 返回同一 `analysis_id`） |
-| GET | `/analyze/{analysis_id}` | 结果（claims / unknowns / needs_human_review / token 成本） |
-| GET | `/claims` | `status, claim_type, subject_entity_id`，游标分页 |
-| POST | `/claims/{id}/promote` | 提升为关系。走 `state_guard`；`inferred`/`hypothesis` → 422 |
-| POST | `/claims/{id}/reject` | 否定 Claim |
+`POST /analyze/news/{id}`、`GET /analyze/{id}`、`GET /claims`、`POST /claims/{id}/promote`、`POST /claims/{id}/reject`
 
 ### 6.9 事件与传导
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/events` | `since, until, event_type, importance` |
-| GET | `/events/{id}` | 详情 + 关联实体 |
-| POST | `/events/{id}/propagate` | `depth≤5, max_nodes, min_evidence_grade` |
-| GET | `/events/{id}/impact-paths` | 路径列表（含 `status`） |
+`GET /events`、`GET /events/{id}`、`POST /events/{id}/propagate`、`GET /events/{id}/impact-paths`
 
-### 6.10 质量中心
+**传导准入**：只用 `status = verified` 的边。`disputed` / `expired` / `revoked` 一律排除，命中即返回 `STATE_TRANSITION_INVALID`（代码：`assert_usable_for_propagation`）。
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/quality/metrics` | 七项指标 + 时间序列 |
-| GET | `/quality/issues` | `issue_type, severity, status` |
-| POST | `/quality/scan` | `scope=full\|incremental` |
-| POST | `/quality/issues/{id}/resolve` | `{resolution_note}` |
-| GET | `/quality/impact/{relationship_id}` | 该关系被撤销后的下游影响清单 |
+### 6.10 质量中心 / 6.11 系统管理
 
-### 6.11 系统管理
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/admin/agents` | Agent 清单与最近运行状态 |
-| GET | `/admin/tasks` | 调度任务与执行历史 |
-| GET | `/admin/logs` | `level, since, limit` |
-| GET/PATCH | `/admin/settings` | 扩展深度、节点上限、置信阈值 |
+`/quality/metrics`、`/quality/issues`、`/quality/scan`、`/quality/impact/{relationship_id}`
+`/admin/agents`、`/admin/tasks`、`/admin/logs`、`/admin/settings`（读写阈值，写操作必须带 `reason`，落 `app_setting_history`）
 
 ---
 
@@ -393,34 +275,19 @@ class RelationshipStatus(StrEnum):
 
 | 场景 | 机制 |
 |---|---|
-| `POST /ingest/run` | 必带 `Idempotency-Key`；同 key 24h 内返回首次结果（落库表 `idempotency_key`） |
-| `POST /analyze/news/{id}` | 以 `news_id` 为键天然幂等 |
-| 状态迁移端点 | 目标状态 == 当前状态 → 200 + 当前状态，不报错（已实现） |
-| 客户端重试 | 仅对 `429 / 502 / 503` 与网络错误重试；指数退避，最多 3 次 |
+| `POST /ingest/run` | `Idempotency-Key`，24h 内返回首次结果（`idempotency_key` 表） |
+| `POST /analyze/news/{id}` | 以 `news_id` 为键 |
+| 状态迁移 | 目标 == 当前 → 200 + 当前状态，不报错 |
+| 重试 | 仅 `429/502/503` 与网络错误，指数退避 ≤ 3 次 |
 
 ---
 
-## 八、契约冻结与变更流程
+## 八、本版关闭的评审项
 
-```
-提案（docs/adr/ADR-xxxx.md）
- → architect 评估（兼容性 / 影响端点 / 影响 Agent）
- → 更新本文件 + changelog.md + 版本号
- → 更新 backend/app/schemas/ + OpenAPI
- → frontend 重新生成类型
- → 契约测试通过
-```
-
-**破坏性变更**：删字段、改类型、改枚举含义、改状态机、改错误码语义。
-
----
-
-## 九、本版已关闭的待评审项
-
-| # | 原问题 | 结论 |
+| # | 问题 | 结论 |
 |---|---|---|
-| 1 | ID 用 UUIDv7 还是 ULID | **UUIDv7**，已实现（`core/ids.py`） |
-| 2 | 图谱 `as_of` 时态何时做 | **v1 不做**，P4 评估；参数已移除 |
-| 3 | 审批人模型单用户 vs 角色表 | P3 前单用户，`actor` 为自由字符串（`agent:qa-audit` / `human:kevin`） |
-| 4 | 采集触发是否暴露前端 | 仅 admin，P2 开放 |
-| 5 | 图谱端点是否分页 | **不分页**，`truncated` 即终态 |
+| Q-02 | `POTENTIAL_*` 是否进图 | 不进图（ADR-0007） |
+| Q-06 | `DISPUTED` 第 7 态 | **批准**，语义限定为「已验证后受挑战」 |
+| Q-07 | `locale=C` | **保留**，排序键在应用层（ADR-0009/0010） |
+| Q-08 | 证据阈值 | **保留 v1**，但阈值只决定进入核验；独立性改按 `origin_key` |
+| — | I-5 证据不可变 | 触发器实现，见 6.5 |

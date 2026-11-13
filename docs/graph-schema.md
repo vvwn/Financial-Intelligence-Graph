@@ -1,6 +1,6 @@
 # Neo4j 图 Schema
 
-> 版本 **v1.0** · 2026-11-13 · 状态：**frozen**
+> 版本 **v1.1** · 2026-11-13 · 状态：**frozen**
 > 权威 DDL：`database/neo4j/constraints.cypher`、`indexes.cypher`（已应用到 Neo4j 5.26）
 > 维护者：`graph-eng` ｜ 会签：`architect`
 
@@ -93,6 +93,7 @@
 |---|---|---|
 | `rid` | `relationship.id` | 关系键，**不是端点组合** |
 | `status` | `relationship.status` | 只可能是 verified / disputed / expired / revoked |
+| `disputed_at` | `relationship_history`（进入 disputed 的时刻） | 仅 disputed 边有；前端据此显示「何时被挑战」 |
 | `confidence` | `relationship.confidence` | 原值，图侧不做任何再计算 |
 | `valid_from` / `valid_to` | 同名列 | — |
 | `evidence_count` | `v_evidence_distinct` 计数 | 按 `content_hash` 去重后的条数 |
@@ -134,6 +135,19 @@ WHERE r.status IN ('verified','disputed','expired','revoked')
 ```
 
 三重过滤，缺一不可：状态、类型、增量水位。
+
+### 5.1b disputed 的投影语义（评审裁决 2026-11-13）
+
+`disputed` **入图，但必须自证身份**：
+
+| 要求 | 落地 |
+|---|---|
+| 可查询 | `status='disputed'`，`GET /graph/*` 默认不返回，需 `include_disputed=true` |
+| 不得冒充事实 | 前端必须用虚线 + 「有争议」标签；不得与 verified 同色同线型 |
+| 不得用于传导 | `assert_usable_for_propagation` 只放行 `verified`；传导算法过滤 disputed |
+| 双方证据都要在 | `evidence_count` 只统计 supporting；`contradicting_count` 单独暴露 |
+
+投影时**不合并** disputed 与 verified 为同一状态：两者并存于同一三元组是不允许的（部分唯一索引限制活跃三态），因此一条三元组在同一时刻要么 verified 要么 disputed，切换时更新同一条边。
 
 ### 5.2 写入语义
 
@@ -208,4 +222,5 @@ MERGE (s)-[r:SUPPLIES_TO {rid: $rid}]->(t)
 | `COMPETES_WITH` 双向 vs 单向 | 暂定单向 + `symmetric=true`，查询需双向匹配；未压测 |
 | `POTENTIAL_*` 是否需要一个独立的「推断子图」视图 | 当前完全不进图；若前端需要可视化候选网络，需单独设计，不在本版 |
 | 全量重建期间的读一致性 | 未实现双写过渡，重建窗口内图不可用（秒级） |
+| 投影器完整性 | 当前只实现「单条关系投影 + 单边删除」两个原语（`app/graph/projector.py`）；增量/全量调度属 TASK-202 |
 | 投影性能基线 | 未压测 10 万关系规模 |

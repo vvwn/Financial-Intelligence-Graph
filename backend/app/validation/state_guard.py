@@ -1,13 +1,16 @@
-"""State machine and promotion rules (ADR-0003, owner decisions 2026-11-13).
+"""State machine, evidence threshold and layer rules (ADR-0008, ADR-0010, ADR-0011).
 
 Three guarantees enforced here, not in documentation:
 
-1. Only legal status transitions are allowed. `verified -> candidate` is impossible.
-2. A claim may become a relationship only if it is `fact_reported` and its evidence
-   meets the grade threshold. `inferred` / `hypothesis` are permanently barred.
-3. Candidate-layer relationship types (POTENTIAL_*) never reach the graph.
+1. Only legal transitions are allowed. `verified -> candidate` is impossible.
+2. The evidence threshold decides whether a relationship may ENTER REVIEW. It never
+   verifies anything by itself: verification additionally requires an explicit approval.
+3. `disputed` is only reachable from `verified` — it means "a verified fact was
+   challenged by new evidence", not "still checking".
 
-The caller is responsible for persisting; this module only decides.
+Independence rule: two evidence items are independent only if their `origin_key`
+differs. Different `content_hash` is NOT sufficient — reposts, quotations and
+abridged copies of one report are one origin.
 """
 
 from __future__ import annotations
@@ -41,10 +44,11 @@ LEGAL_TRANSITIONS: dict[RelationshipStatus, frozenset[RelationshipStatus]] = {
             RelationshipStatus.REVOKED,
         }
     ),
+    # NOTE: pending_review -> disputed is intentionally absent.
+    # `disputed` means "a verified fact was challenged"; it is not a review outcome.
     RelationshipStatus.PENDING_REVIEW: frozenset(
         {
             RelationshipStatus.VERIFIED,
-            RelationshipStatus.DISPUTED,
             RelationshipStatus.REJECTED,
             RelationshipStatus.REVOKED,
         }
@@ -76,6 +80,11 @@ LEGAL_TRANSITIONS: dict[RelationshipStatus, frozenset[RelationshipStatus]] = {
     RelationshipStatus.REVOKED: frozenset(),
 }
 
+#: Statuses that may feed investment / propagation analysis as established fact.
+PROPAGATION_ALLOWED_STATUSES: frozenset[RelationshipStatus] = frozenset(
+    {RelationshipStatus.VERIFIED}
+)
+
 
 def assert_transition_allowed(
     from_status: RelationshipStatus | str,
@@ -86,7 +95,6 @@ def assert_transition_allowed(
     dst = RelationshipStatus(to_status)
 
     if src == dst:
-        # Idempotent no-op is allowed at the API layer; the caller should short-circuit.
         return
 
     allowed = LEGAL_TRANSITIONS[src]
@@ -103,8 +111,22 @@ def assert_transition_allowed(
 
 
 # ---------------------------------------------------------------------------
-# 2. Promotion: claim -> verified relationship
+# 2. Evidence threshold
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EvidenceThreshold:
+    """Threshold config. Persisted in app_setting, audited in app_setting_history."""
+
+    version: str = "v1"
+    required_grades: frozenset[EvidenceGrade] = VERIFIED_REQUIRING_GRADES
+    min_c_origins: int = VERIFIED_MIN_C_EVIDENCE
+    #: Threshold never verifies on its own; this stays False by design.
+    auto_verify: bool = False
+
+
+DEFAULT_THRESHOLD = EvidenceThreshold()
 
 
 @dataclass(frozen=True)
@@ -113,119 +135,212 @@ class EvidenceFact:
 
     evidence_id: str
     grade: EvidenceGrade
-    content_hash: str
+    origin_key: str
     relation: str = "supporting"  # supporting | contradicting
 
     def __post_init__(self) -> None:
-        # Rows coming out of the DB carry a plain str; normalise once, here,
-        # so every downstream comparison works on the enum.
         if not isinstance(self.grade, EvidenceGrade):
             object.__setattr__(self, "grade", EvidenceGrade(self.grade))
 
 
 @dataclass
-class PromotionDecision:
-    allowed: bool
-    target_status: RelationshipStatus
-    reasons: list[str] = field(default_factory=list)
-    distinct_supporting: int = 0
+class ThresholdDecision:
+    met: bool
+    distinct_supporting_origins: int = 0
     best_grade: EvidenceGrade | None = None
-    contradicting: int = 0
-
-    def raise_if_denied(self) -> None:
-        if self.allowed:
-            return
-        if any("claim_type" in r for r in self.reasons):
-            raise AppError(
-                ErrorCode.CLAIM_TYPE_NOT_PROMOTABLE,
-                "This claim type can never be promoted to a verified relationship",
-                details={"reasons": self.reasons},
-            )
-        raise AppError(
-            ErrorCode.EVIDENCE_REQUIRED,
-            "Evidence does not meet the threshold for verification",
-            details={
-                "reasons": self.reasons,
-                "distinct_supporting": self.distinct_supporting,
-                "best_grade": self.best_grade.value if self.best_grade else None,
-                "required": "1x A/B or 2 distinct C",
-            },
-        )
+    c_origins: int = 0
+    contradicting_origins: int = 0
+    threshold_version: str = DEFAULT_THRESHOLD.version
+    reasons: list[str] = field(default_factory=list)
 
 
-def _dedupe_by_content(evidence: Iterable[EvidenceFact]) -> list[EvidenceFact]:
-    """Reposts of the same article are ONE piece of evidence (invariant I-6)."""
-    seen: dict[str, EvidenceFact] = {}
+def _split_by_relation(
+    evidence: Iterable[EvidenceFact],
+) -> tuple[dict[str, EvidenceFact], dict[str, EvidenceFact]]:
+    """Collapse to one row per (relation, origin_key). Reposts are one origin."""
+    supporting: dict[str, EvidenceFact] = {}
+    contradicting: dict[str, EvidenceFact] = {}
     for item in evidence:
-        key = f"{item.relation}:{item.content_hash}"
-        if key not in seen:
-            seen[key] = item
-    return list(seen.values())
+        bucket = supporting if item.relation == "supporting" else contradicting
+        bucket.setdefault(item.origin_key, item)
+    return supporting, contradicting
 
 
-def evaluate_promotion(
+def evaluate_threshold(
     claim_type: ClaimType | str,
     evidence: Sequence[EvidenceFact],
-) -> PromotionDecision:
-    """Decide whether a claim may be promoted, and to which status.
+    threshold: EvidenceThreshold = DEFAULT_THRESHOLD,
+) -> ThresholdDecision:
+    """Decide whether the evidence clears the bar to enter review.
 
-    Returns a decision instead of raising, so callers can also use it for
-    dry-runs and QA reporting.
+    Never returns "verified" — the caller must obtain an explicit approval.
     """
     ctype = ClaimType(claim_type)
-    distinct = _dedupe_by_content(evidence)
-
-    supporting = [e for e in distinct if e.relation == "supporting"]
-    contradicting = [e for e in distinct if e.relation == "contradicting"]
+    supporting, contradicting = _split_by_relation(evidence)
 
     best: EvidenceGrade | None = None
-    for item in supporting:
-        # Grades are ordered A < B < C < D lexicographically, so min == strongest.
+    for item in supporting.values():
         if best is None or item.grade.value < best.value:
             best = item.grade
 
-    decision = PromotionDecision(
-        allowed=False,
-        target_status=RelationshipStatus.PENDING_REVIEW,
-        distinct_supporting=len(supporting),
+    c_origins = sum(1 for e in supporting.values() if e.grade == EvidenceGrade.C)
+
+    decision = ThresholdDecision(
+        met=False,
+        distinct_supporting_origins=len(supporting),
         best_grade=best,
-        contradicting=len(contradicting),
+        c_origins=c_origins,
+        contradicting_origins=len(contradicting),
+        threshold_version=threshold.version,
     )
 
     if ctype not in PROMOTABLE_CLAIM_TYPES:
-        decision.reasons.append(f"claim_type={ctype.value} is not promotable")
+        decision.reasons.append(
+            f"claim_type={ctype.value} is not promotable; AI inference stays in the candidate layer"
+        )
         return decision
 
     if not supporting:
         decision.reasons.append("no supporting evidence")
         return decision
 
-    if contradicting:
-        # Both sides are kept; the relationship parks in DISPUTED, never VERIFIED.
-        decision.target_status = RelationshipStatus.DISPUTED
-        decision.reasons.append(
-            f"{len(contradicting)} contradicting evidence item(s); status=disputed"
-        )
-        decision.allowed = True
-        return decision
-
-    has_strong = best is not None and best in VERIFIED_REQUIRING_GRADES
-    c_count = sum(1 for e in supporting if e.grade == EvidenceGrade.C)
-
-    if has_strong or c_count >= VERIFIED_MIN_C_EVIDENCE:
-        decision.allowed = True
-        decision.target_status = RelationshipStatus.VERIFIED
+    has_strong = best is not None and best in threshold.required_grades
+    if has_strong or c_origins >= threshold.min_c_origins:
+        decision.met = True
         return decision
 
     decision.reasons.append(
-        f"weak evidence: best={best.value if best else None}, distinct_C={c_count}, "
-        f"need 1x A/B or {VERIFIED_MIN_C_EVIDENCE}x C"
+        f"weak evidence: best={best.value if best else None}, "
+        f"independent_C_origins={c_origins}, need 1x A/B or {threshold.min_c_origins}x C "
+        f"from different origins (threshold {threshold.version})"
     )
     return decision
 
 
 # ---------------------------------------------------------------------------
-# 3. Layer separation: candidate layer never enters the graph
+# 3. Review entry and verification
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ReviewDecision:
+    allowed: bool
+    target_status: RelationshipStatus = RelationshipStatus.PENDING_REVIEW
+    threshold: ThresholdDecision | None = None
+    reasons: list[str] = field(default_factory=list)
+
+    def raise_if_denied(self) -> None:
+        if self.allowed:
+            return
+        code = (
+            ErrorCode.CLAIM_TYPE_NOT_PROMOTABLE
+            if any("not promotable" in r for r in self.reasons)
+            else ErrorCode.EVIDENCE_REQUIRED
+        )
+        raise AppError(code, "Cannot enter review", details={"reasons": self.reasons})
+
+
+def evaluate_review_eligibility(
+    claim_type: ClaimType | str,
+    evidence: Sequence[EvidenceFact],
+    threshold: EvidenceThreshold = DEFAULT_THRESHOLD,
+) -> ReviewDecision:
+    """candidate -> pending_review. Threshold only; no approval needed to queue work."""
+    decision = evaluate_threshold(claim_type, evidence, threshold)
+    return ReviewDecision(
+        allowed=decision.met,
+        target_status=RelationshipStatus.PENDING_REVIEW,
+        threshold=decision,
+        reasons=decision.reasons,
+    )
+
+
+@dataclass
+class VerificationDecision:
+    allowed: bool
+    threshold: ThresholdDecision | None = None
+    reasons: list[str] = field(default_factory=list)
+
+    def raise_if_denied(self) -> None:
+        if self.allowed:
+            return
+        if any("not promotable" in r for r in self.reasons):
+            raise AppError(
+                ErrorCode.CLAIM_TYPE_NOT_PROMOTABLE,
+                "This claim type can never be verified",
+                details={"reasons": self.reasons},
+            )
+        raise AppError(
+            ErrorCode.EVIDENCE_REQUIRED,
+            "Cannot verify",
+            details={
+                "reasons": self.reasons,
+                "threshold_version": self.threshold.threshold_version
+                if self.threshold
+                else None,
+            },
+        )
+
+
+AUTOMATED_ACTOR_PREFIXES = ("system:", "auto:", "pipeline:")
+
+
+def evaluate_verification(
+    claim_type: ClaimType | str,
+    evidence: Sequence[EvidenceFact],
+    *,
+    approved_by: str | None,
+    threshold: EvidenceThreshold = DEFAULT_THRESHOLD,
+) -> VerificationDecision:
+    """pending_review -> verified.
+
+    Requires (a) the threshold, (b) an explicit human/QA approval, and
+    (c) no unresolved contradicting evidence.
+    """
+    decision = evaluate_threshold(claim_type, evidence, threshold)
+    result = VerificationDecision(
+        allowed=False, threshold=decision, reasons=list(decision.reasons)
+    )
+
+    if not decision.met:
+        return result
+
+    if not approved_by:
+        result.reasons.append(
+            "threshold met, but verification requires an explicit approval "
+            "(approved_by); the threshold never verifies by itself"
+        )
+        return result
+
+    if approved_by.lower().startswith(AUTOMATED_ACTOR_PREFIXES):
+        result.reasons.append(
+            f"approved_by={approved_by} is an automated actor; verification must be human or QA"
+        )
+        return result
+
+    if decision.contradicting_origins:
+        result.reasons.append(
+            f"{decision.contradicting_origins} contradicting origin(s) unresolved; "
+            "cannot verify (conflicts on already-verified facts are recorded as disputed)"
+        )
+        return result
+
+    result.allowed = True
+    return result
+
+
+def assert_can_dispute(contradicting_evidence_ids: Sequence[str]) -> None:
+    """Entering disputed requires at least one contradicting evidence item."""
+    if not contradicting_evidence_ids:
+        raise AppError(
+            ErrorCode.EVIDENCE_REQUIRED,
+            "disputed requires at least one contradicting evidence item",
+            details={"required": "evidence_ids with relation=contradicting"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# 4. Layer separation and propagation
 # ---------------------------------------------------------------------------
 
 
@@ -251,6 +366,20 @@ def assert_projectable(
             details={
                 "status": rstatus.value,
                 "projectable": sorted(s.value for s in PROJECTABLE_STATUSES),
+            },
+        )
+
+
+def assert_usable_for_propagation(status: RelationshipStatus | str) -> None:
+    """Disputed facts must never drive an investment conclusion."""
+    rstatus = RelationshipStatus(status)
+    if rstatus not in PROPAGATION_ALLOWED_STATUSES:
+        raise AppError(
+            ErrorCode.STATE_TRANSITION_INVALID,
+            f"status {rstatus.value} cannot be used as established fact in propagation",
+            details={
+                "status": rstatus.value,
+                "allowed": sorted(s.value for s in PROPAGATION_ALLOWED_STATUSES),
             },
         )
 

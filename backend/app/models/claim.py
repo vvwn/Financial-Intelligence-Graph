@@ -25,10 +25,14 @@ from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.schemas.enums import RelationshipType
 
 CLAIM_TYPES = ("fact_reported", "inferred", "hypothesis", "disputed")
 CLAIM_STATUSES = ("candidate", "supported", "rejected", "disputed")
 MENTION_TYPES = ("company", "product", "technology", "industry", "person", "other")
+
+#: predicate reuses the relationship-type enum (contract decision D-14).
+PREDICATES = tuple(t.value for t in RelationshipType)
 
 
 class Claim(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -62,6 +66,7 @@ class Claim(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint(f"claim_type IN {CLAIM_TYPES}", name="claim_type_valid"),
         CheckConstraint(f"status IN {CLAIM_STATUSES}", name="status_valid"),
+        CheckConstraint(f"predicate IN {PREDICATES}", name="predicate_valid"),
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
         # Inference must not look certain, and hypothesis even less so.
         CheckConstraint(

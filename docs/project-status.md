@@ -1,13 +1,14 @@
 # 项目状态
 
-> 最后更新：2026-11-13 00:50 · 维护者：`architect`
+> 最后更新：2026-11-13 08:50 · 维护者：`architect`
 > **状态语义严格区分**：未开始 / 已写代码 / 已运行 / 测试通过 / 已合并 / 已部署 / 已验证实际数据。
 
 ---
 
 ## 一、当前阶段
 
-**Phase 0 — 架构设计与可行性验证**（契约已冻结，**等待独立评审**）
+**Phase 0 — 架构设计与可行性验证**（裁决已执行，**等待评审方签署**）
+状态：`awaiting_review`（TASK-007 保持 review）
 
 | 交付物 | 状态 | 证据 |
 |---|---|---|
@@ -19,10 +20,11 @@
 | `testing-strategy.md` | ✅ **frozen v1.0** | 25 例判据全部定义 |
 | `task-dependencies.md` | ✅ v0.1 | 30 任务、10 波次、无环 |
 | `development-roadmap.md` | ✅ v0.1 | P0–P5 |
-| **`reports/development/phase0-architecture-review.md`** | ✅ **已提交，待评审** | 36 条缺陷修复清单 + 测试原文 |
-| 代码 | ✅ 骨架 + 迁移 + 状态守卫 | 51 tests passed |
+| **`reports/development/phase0-architecture-review.md`** | ✅ **v2 已提交，待签署** | 36 条缺陷 + 裁决执行结果 + 测试原文 |
+| 代码 | ✅ 骨架 + 2 个迁移 + 状态守卫 + 投影原语 | 62 单元通过；34 个 DB 测试被阻塞 |
 
-**Phase 0 未完成的部分**：评审方签字。在此之前状态保持 `awaiting_review`，不置 `completed`。
+**Phase 0 未完成的部分**：① 评审方签字；② Docker 恢复后跑完 34 个 DB/Neo4j 测试与备份演练。
+在此之前状态保持 `awaiting_review`，不置 `completed`。
 
 ---
 
@@ -47,7 +49,13 @@
 
 | 项 | 证据 |
 |---|---|
-| 契约层冻结 | 三份文档 `status: frozen` v1.0 + 一项测试策略 |
+| 契约层冻结 | 三份文档 `status: frozen` **v1.1** + 测试策略 v1.1 |
+| 裁决执行 | disputed 语义、阈值只入核验、排序键、I-5 触发器、predicate CHECK |
+| 迁移 2 | `c7d1e4a92f10`：7 个新列 / 2 张新表 / 2 个触发器 / 1 个视图（**未在真实库执行**） |
+| 排序键 | `core/sortkey.py`（拼音 + 多音字 + 数字补零），12 个单测通过 |
+| 投影原语 | `graph/projector.py`（单关系投影 + 删边），7 个测试待 DB |
+| 运维脚本 | `backup.sh` / `restore.sh` / `verify_backup.sh`（未演练） |
+| CI | `.github/workflows/ci.yml`（未在 GitHub 运行） |
 | 数据模型 | 25 表 + `v_evidence_distinct` 视图 + `trg_relationship_history_immutable` 触发器 |
 | 迁移链路 | `alembic upgrade head` 成功；`alembic check` 无差异 |
 | 状态机与提升规则 | `validation/state_guard.py`（7 态矩阵 + 证据达标 + 层级隔离） |
@@ -76,7 +84,8 @@
 |---|---|---|---|
 | B-04 | 实体消歧标准未定（Q-01） | TASK-101/302/401 | architect + qa-audit 会签规则 |
 | B-07 | `DISPUTED` 第 7 态未获批（Q-06） | 全部状态逻辑 | 评审方裁决 |
-| B-08 | 证据阈值未校准（Q-08） | TASK-411/412 | 需 TASK-101 真实数据 |
+| B-08 | 证据阈值未校准（Q-03b） | TASK-411 | 需 TASK-101 真实数据 |
+| B-09 | **Docker 守护进程不可用** | 34 个 DB/Neo4j 测试、迁移执行、备份演练 | 人工启动 Docker Desktop（本机 wsl.exe 被安全策略拦截） |
 
 ---
 
@@ -103,14 +112,18 @@
 | D-03 | 图谱时态查询 `as_of` 未实现 | P4 评估 |
 | D-04 | 质量指标实时聚合，未物化 | >10 万关系时改 |
 | D-05 | APScheduler 单进程假设，无分布式锁 | 多实例部署前必须解决 |
-| D-06 | 证据「不可变」只有约定，无列级触发器（I-5） | 待设计「禁改正文/允许改状态」 |
-| D-07 | `predicate` 无 DB CHECK（事件型谓词未穷举） | TASK-003 收尾 |
+| D-06 | ~~证据不可变只有约定~~ | ✅ 已由触发器强制（ADR-0011） |
+| D-07 | ~~`predicate` 无 DB CHECK~~ | ✅ 已加 CHECK，取值 = 关系类型枚举 |
+| D-08 | 排序键算法升级需全量回填，期间键与原文可能不一致 | 每次升 `SORT_KEY_VERSION` 时跑 backfill |
+| D-09 | 迁移 `c7d1e4a92f10` 未在真实库验证 | Docker 恢复后立即执行 |
 
 ---
 
 ## 八、下一步
 
-1. **评审方**阅读 `reports/development/phase0-architecture-review.md`，就三个待裁决项给出结论
-2. 按评审意见修订（若 REJECTED / WITH CONDITIONS）
-3. 评审通过后：Phase 0 置 `completed`，进入 Phase 1（TASK-201 图约束会签 → TASK-202 投影器）
-4. 未获批准前**不启动 Phase 1 业务开发**
+1. **恢复 Docker**（人工启动 Docker Desktop），然后依次执行：
+   `alembic upgrade head` → `alembic check` → `pytest`（含 db/neo4j）→ `scripts/verify_backup.sh`
+2. 把上述原始输出补进评审报告第六节，替换当前「未验证」标注
+3. **评审方**签署 APPROVED / WITH CONDITIONS / REJECTED
+4. 签署通过后 Phase 0 才置 `completed`，进入 Phase 1
+5. 未获批准前**不启动 Phase 1 业务开发**

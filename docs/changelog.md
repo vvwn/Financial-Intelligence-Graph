@@ -4,6 +4,52 @@
 
 ---
 
+## [0.3.0] — 2026-11-13 · 执行架构评审裁决
+
+### 裁决执行
+
+- **DISPUTED 第 7 态批准**：语义限定为「已验证关系受到新证据挑战」；`pending_review → disputed` 改为**非法**；`relationship_evidence` 增加 `relation` 并进主键（双方证据并存）；`relationship_history` 增加 `trigger`，进入 disputed 必须有反向证据（DB CHECK）。
+- **locale=C 保留**：新增 `entity.name_sort_key` + `name_sort_key_version` + `entity_sort_key_history`；`core/sortkey.py` 拼音排序键（多音字按词组上下文）；`scripts/backfill_sort_keys.py` 默认 dry-run。
+- **阈值语义修正**：阈值只决定 `candidate → pending_review`；`pending_review → verified` 额外要求 `approved_by`，自动化 actor（`system:`/`auto:`/`pipeline:`）一律拒绝；阈值版本与变更记入 `app_setting_history`。
+- **独立性修正**：`evidence.origin_key` 标识原始报道；阈值按 `COUNT(DISTINCT origin_key)` 计数，不同 `content_hash` 不再视为独立来源；`syndicated_from_id` 继承来源，`v_evidence_origin` 聚合视图。
+- **I-5 落地**：`trg_evidence_immutable` 禁改正文列与 DELETE、仅允许改 `verification_status`；`trg_evidence_linkage` 校验 `supersedes_id` 同源且不倒序。
+
+### 新增
+
+- 迁移 `c7d1e4a92f10`（7 列 / 2 表 / 2 触发器 / 1 视图 / predicate CHECK）
+- `app/graph/projector.py`：单关系投影 + 删边原语（幂等，`MERGE`）
+- `app/core/sortkey.py`、`app/services/settings_service.py`
+- 测试：`test_sortkey.py`(12)、`test_evidence_immutability.py`(9)、`test_projector.py`(8)、生命周期测试重写(14)
+- `scripts/{backup,restore,verify_backup}.sh`、`scripts/backfill_sort_keys.py`
+- `.github/workflows/ci.yml`
+- `database/seeds/sources.yaml`、`tests/fixtures/` 六个目录 + 格式规格
+- `predicate` CHECK（取值 = 关系类型枚举）
+- Docker secrets 支持（`POSTGRES_PASSWORD_FILE` / `NEO4J_PASSWORD_FILE`）
+
+### 破坏性变更（契约 v1.0 → v1.1）
+
+- `pending_review → disputed` 不再合法
+- `verify` 必须携带 `approved_by`
+- 证据必须携带 `origin_key`（NOT NULL）
+- `relationship_evidence` 主键改为三元组
+
+### 验证状态（诚实标注）
+
+| 项 | 结果 |
+|---|---|
+| 单元测试（无 DB） | ✅ 62 passed |
+| ruff | ✅ All checks passed |
+| 全量 pytest | ⚠️ 66 passed / **34 errors**（DB 未启动） |
+| `alembic upgrade head` | ❌ **未执行**（Docker 不可用） |
+| 备份恢复演练 | ❌ **未执行** |
+| CI | ❌ **未在 GitHub 运行** |
+
+### 阻塞
+
+- B-09：Docker 守护进程不可用，`wsl.exe` 被本机安全策略拦截，无法启动 Docker Desktop。
+
+---
+
 ## [0.2.0] — 2026-11-13 · 契约冻结与缺陷修复
 
 ### 架构决策（评审方 2026-11-13 下达）

@@ -1,0 +1,15 @@
+[
+  {
+    "request_hash": "sha256:sample",
+    "model": "recorded-model",
+    "prompt_version": "v1",
+    "response": {
+      "event": { "event_type": "contract", "importance": 3 },
+      "entities": [],
+      "claims": [],
+      "unknowns": [],
+      "needs_human_review": []
+    },
+    "expect": { "parse_ok": true }
+  }
+]

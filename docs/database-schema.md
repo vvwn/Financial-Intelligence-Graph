@@ -1,7 +1,7 @@
 # PostgreSQL 数据结构
 
-> 版本 **v1.0** · 2026-11-13 · 状态：**frozen**
-> 权威 DDL：`database/migrations/versions/bdaf9a0511cb_init_schema.py`（已实际执行）
+> 版本 **v1.1** · 2026-11-13 · 状态：**frozen**
+> 权威 DDL：`bdaf9a0511cb_init_schema.py` + `c7d1e4a92f10_disputed_sortkeys_evidence_origin.py`
 > 本文解释设计意图与约束理由；两者不一致时以迁移文件为准，并立即修正本文。
 > 维护者：`architect`（唯一写入者）
 
@@ -22,7 +22,8 @@
 
 | 域 | 表 | 说明 |
 |---|---|---|
-| 实体 | `entity` | 统一实体表，含 `entity_type`、`stock_code`、`attributes` |
+| 实体 | `entity` | 统一实体表，含 `entity_type`、`stock_code`、`attributes`、**`name_sort_key`** |
+| | `entity_sort_key_history` | **排序键变更审计（只追加）** |
 | | `entity_alias` | 别名/曾用名/英文名 |
 | | `company_profile` | 上市公司业务档案（主营、产品收入构成、产业链位置） |
 | | `industry_taxonomy` | 产业分类树（自引用 `parent_code`） |
@@ -33,16 +34,17 @@
 | | `collect_run` | 一次采集的汇总 |
 | | `collect_run_source` | **per-source 明细**（一行汇总看不出哪个源坏了） |
 | | `dead_letter` | 失败条目 + `http_status` + `next_retry_at` |
-| 证据 | `evidence` | 不可变证据，`content_hash` 用于转载去重 |
+| 证据 | `evidence` | 不可变证据，含 **`origin_key`**（原始报道标识）与 `syndicated_from_id` |
 | 主张 | `claim` | AI 产出的主张，含 `object_text` 字面量对象 |
 | | `claim_evidence` | 主张↔证据（supporting / contradicting） |
 | | `entity_mention` | 实体提及位置（实体合并后可回溯重链） |
 | | `claim_relationship` | 主张↔关系（替代无外键的 `uuid[]`） |
 | 关系 | `relationship` | 正式关系，7 态状态机 |
-| | `relationship_evidence` | 关系↔证据 + `weight` |
-| | `relationship_history` | **只追加**的状态迁移审计 |
+| | `relationship_evidence` | 关系↔证据 + **`relation`（supporting/contradicting）** + `weight` |
+| | `relationship_history` | **只追加**的状态迁移审计，含 **`trigger`** |
 | 传导 | `impact_path` | 事件影响路径，含 `status`（valid / invalidated / stale） |
-| 运维 | `quality_issue` | 质检问题 |
+| 运维 | `app_setting_history` | **阈值等配置的变更审计（只追加）** |
+| | `quality_issue` | 质检问题 |
 | | `analysis_run` | 每次 LLM 分析的 token/耗时/状态 |
 | | `graph_projection_run` | 每次投影统计 |
 | | `idempotency_key` | `Idempotency-Key` 落库，否则该请求头只是装饰 |
@@ -113,6 +115,69 @@ CHECK (valid_to IS NULL OR valid_from IS NULL OR valid_to >= valid_from)
 CHECK (confidence >= 0 AND confidence <= 1)
 ```
 
+### 3.4b disputed 与证据双向
+
+```sql
+-- 一条证据可能同时被双方引用（不同来源对同一材料的解读相反），
+-- 因此 relation 必须进主键，否则后写入的一侧会覆盖前一侧。
+PRIMARY KEY (relationship_id, evidence_id, relation)
+CHECK (relation IN ('supporting','contradicting'))
+
+-- 进入 disputed 必须引用至少一条反向证据，否则「有争议」是空话。
+CHECK (to_status <> 'disputed' OR array_length(evidence_ids, 1) >= 1)
+
+-- 迁移原因必须可归类，便于审计与统计。
+CHECK (trigger IN ('claim_promotion','evidence_threshold','manual_approval',
+                   'new_evidence','rule','migration','manual'))
+```
+
+### 3.4c 排序键（locale=C 的配套）
+
+```sql
+-- 原始名称不动，另存一个可排序的键；版本号用于批量重算时区分算法。
+entity.name_sort_key          text NOT NULL DEFAULT ''
+entity.name_sort_key_version  varchar(8) NOT NULL DEFAULT 'v1'
+CREATE INDEX ix_entity_name_sort_key ON entity (name_sort_key);
+
+-- 键变化必须留痕，否则整张产业列表会被静默重排。
+CREATE TABLE entity_sort_key_history (
+  entity_id uuid, old_key text, new_key text,
+  old_version varchar(8), new_version varchar(8),
+  reason varchar(64), actor varchar(64), created_at timestamptz
+);
+```
+
+键生成规则见 `backend/app/core/sortkey.py`：中文转无声调拼音（词组级，多音字按上下文）、ASCII 小写、数字补零到 6 位、标点转单一分隔符。**算法变更必须升 `SORT_KEY_VERSION` 并跑 `scripts/backfill_sort_keys.py`。**
+
+### 3.4d 证据独立性与不可变（I-5、I-6）
+
+```sql
+-- 独立性看原始报道，不看文本哈希：转载、引用、摘编共用 origin_key。
+evidence.origin_key        varchar(64) NOT NULL CHECK (origin_key <> '')
+evidence.syndicated_from_id uuid REFERENCES evidence(id)
+
+CREATE VIEW v_evidence_origin AS
+SELECT origin_key, count(*) AS evidence_rows,
+       count(DISTINCT content_hash) AS distinct_texts,
+       min(evidence_grade) AS best_grade, min(collected_at) AS first_collected_at
+FROM evidence GROUP BY origin_key;
+```
+
+**不可变触发器**（`trg_evidence_immutable`）：
+
+| 操作 | 结果 |
+|---|---|
+| UPDATE `original_excerpt` / `content_hash` / `origin_key` / `source_*` / `evidence_grade` / 时间戳 | 抛异常 |
+| UPDATE `supersedes_id` / `syndicated_from_id` | 抛异常（只能插入时设定） |
+| DELETE | 抛异常 |
+| UPDATE `verification_status` | **允许**（复核是合法动作） |
+
+**追加式修正校验**（`trg_evidence_linkage`，BEFORE INSERT）：
+
+- `supersedes_id` 必须指向已存在的行，且 `origin_key` 相同（同一报道的更正）
+- 新行 `collected_at` 不得早于被替代行
+- `syndicated_from_id` 必须指向已存在的行，且 `origin_key` 相同（转载继承来源）
+
 ### 3.5 视图与触发器
 
 ```sql
@@ -142,14 +207,17 @@ CREATE TRIGGER trg_relationship_history_immutable
 | I-2 | `inferred`/`hypothesis` 不可提升 | `PROMOTABLE_CLAIM_TYPES` + `relationship_service.transition` | `test_inferred_claim_can_never_be_promoted`、`test_inferred_claim_blocked_at_service_layer` |
 | I-3 | verified 需 A/B 或 ≥2 条独立 C | `evaluate_promotion` + `VERIFIED_MIN_C_EVIDENCE` | `test_single_grade_c_rejected_two_accepted` |
 | I-4 | 关系不物理删除；历史只追加 | DB 触发器 `trg_relationship_history_immutable` | `test_history_is_append_only` |
-| I-5 | 证据不可变 | 无 UPDATE 路径，修正走 `supersedes_id` | （约定，无自动测试） |
-| I-6 | 同文转载只算 1 条证据 | `v_evidence_distinct` + `_dedupe_by_content` | `test_reposts_do_not_count_twice`、`test_evidence_view_dedupes_reposts` |
+| I-5 | 证据不可变；修正只能追加 | DB 触发器 `trg_evidence_immutable` + `trg_evidence_linkage` | `test_update_excerpt_is_refused`、`test_delete_is_refused`、`test_correction_via_new_row_is_allowed` |
+| I-6 | 同源转载只算 1 条独立证据 | `origin_key` 计数 + `v_evidence_origin` | `test_reposts_of_one_origin_cannot_enter_review` |
 | I-7 | `valid_to >= valid_from` | DB CHECK `ck_relationship_valid_window` | 由 CHECK 保证 |
 | I-8 | 三元组无活跃重复 | 部分唯一索引 `ux_relationship_active_triple` | `test_duplicate_active_triple_rejected` |
 | I-9 | 无 Claim 支撑的关系不得 verified | `relationship_service.transition` 前置校验 | `test_no_claim_means_no_verification` |
 | I-10 | 推断置信度不得超上限 | Python 守卫 + DB CHECK 双份 | `test_inferred_claim_confidence_capped_in_db` |
+| I-11 | 阈值不得自动验证 | `evaluate_verification` 要求 `approved_by` | `test_threshold_alone_does_not_verify` |
+| I-12 | disputed 必须有反向证据且双方并存 | DB CHECK + `dispute()` 服务 | `test_dispute_requires_contradicting_evidence`、`test_dispute_preserves_both_sides` |
+| I-13 | disputed 不得用于传导 | `assert_usable_for_propagation` | `test_disputed_projects_but_cannot_drive_propagation` |
 
-**I-5 的坦白**：证据「不可变」目前只靠代码约定，没有 DB 触发器。因为证据确实需要被 `supersedes_id` 修正，硬禁止 UPDATE 会把合法修正路径也堵死。若要强约束，应改为「禁止 UPDATE 正文列，允许 UPDATE verification_status」。**列入待办，未完成。**
+**I-5 已落地**：上一版只有代码约定，现在由触发器强制——禁改正文列、禁 DELETE、只允许改 `verification_status`；合法修正走 `supersedes_id` 追加，并有同源校验与时间顺序校验。双向测试见 `backend/tests/test_evidence_immutability.py`。
 
 ---
 

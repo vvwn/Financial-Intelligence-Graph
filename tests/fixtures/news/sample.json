@@ -1,0 +1,12 @@
+[
+  {
+    "source_key": "sse_announcement",
+    "url": "https://example.com/a",
+    "title": "关于签订重大合同的公告",
+    "content": "公司与客户签订高速光模块供货合同。",
+    "published_at": "2026-11-10T00:00:00Z",
+    "origin_key": "origin-sample-1",
+    "syndicated_from": null,
+    "expected": { "event_type": "contract", "is_repost_of": null }
+  }
+]

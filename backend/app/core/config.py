@@ -15,7 +15,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 #: Values shipped in .env.example. Acceptable locally, fatal in production.
-WEAK_SECRETS = frozenset({"", "fig_local_dev_pwd", "change_me_in_local_env", "changeme", "postgres"})
+WEAK_SECRETS = frozenset(
+    {
+        "",
+        "fig_local_dev",
+        "fig_local_dev_pwd",
+        "change_me_in_local_env",
+        "changeme",
+        "postgres",
+        "neo4j",
+    }
+)
 
 
 class Settings(BaseSettings):
@@ -44,12 +54,14 @@ class Settings(BaseSettings):
     postgres_db: str = "fig"
     postgres_user: str = "fig"
     postgres_password: str = "fig_local_dev"
+    postgres_password_file: str | None = None
     database_url: str = ""
 
     # ---- neo4j ----
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "fig_local_dev"
+    neo4j_password_file: str | None = None
     neo4j_database: str = "neo4j"
 
     # ---- graph expansion (overridable via app_setting table later) ----
@@ -90,6 +102,24 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() in {"production", "prod"}
+
+    @model_validator(mode="after")
+    def _load_secret_files(self) -> Settings:
+        """Support Docker secrets: POSTGRES_PASSWORD_FILE / NEO4J_PASSWORD_FILE.
+
+        Keeps plaintext passwords out of compose files and out of `docker inspect`.
+        """
+        for field, file_env in (
+            ("postgres_password", "postgres_password_file"),
+            ("neo4j_password", "neo4j_password_file"),
+        ):
+            path = getattr(self, file_env, None)
+            if not path:
+                continue
+            candidate = Path(path)
+            if candidate.is_file():
+                object.__setattr__(self, field, candidate.read_text(encoding="utf-8").strip())
+        return self
 
     @model_validator(mode="after")
     def _refuse_weak_secrets_in_production(self) -> Settings:

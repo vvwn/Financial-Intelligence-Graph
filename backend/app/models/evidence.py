@@ -51,6 +51,17 @@ class Evidence(UUIDPrimaryKeyMixin, Base):
         String(16), nullable=False, server_default=text("'unverified'")
     )
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Identity of the ORIGINAL report, not of this copy.
+    # Reposts / quotations / abridged versions of the same report share one origin_key.
+    # Independence for the evidence threshold is counted on this column, because
+    # "different content_hash" does not mean "different source".
+    origin_key: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default=text("''")
+    )
+    # Set when this row is a known repost of another row; origin_key must match.
+    syndicated_from_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("evidence.id")
+    )
     supersedes_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("evidence.id")
     )
@@ -66,7 +77,15 @@ class Evidence(UUIDPrimaryKeyMixin, Base):
         CheckConstraint(
             f"verification_status IN {EVIDENCE_VERIFICATION}", name="verification_valid"
         ),
+        CheckConstraint("origin_key <> ''", name="origin_key_present"),
+        CheckConstraint(
+            "syndicated_from_id IS NULL OR syndicated_from_id <> id", name="syndication_not_self"
+        ),
+        CheckConstraint(
+            "supersedes_id IS NULL OR supersedes_id <> id", name="supersedes_not_self"
+        ),
         Index("ix_evidence_content_hash", "content_hash"),
+        Index("ix_evidence_origin_key", "origin_key"),
         Index("ix_evidence_grade", "evidence_grade"),
     )
 

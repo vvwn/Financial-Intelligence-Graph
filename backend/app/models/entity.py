@@ -52,6 +52,14 @@ class Entity(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
     canonical_name: Mapped[str] = mapped_column(Text, nullable=False)
     normalized_name: Mapped[str] = mapped_column(Text, nullable=False)
+    # Collation-independent ordering key (see app/core/sortkey.py). The database
+    # runs with locale=C, so ORDER BY canonical_name would sort Chinese by bytes.
+    name_sort_key: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("''")
+    )
+    name_sort_key_version: Mapped[str] = mapped_column(
+        String(8), nullable=False, server_default=text("'v1'")
+    )
     stock_code: Mapped[str | None] = mapped_column(String(16))
     exchange: Mapped[str | None] = mapped_column(String(8))
     industry_code: Mapped[str | None] = mapped_column(String(32))
@@ -90,6 +98,7 @@ class Entity(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         Index("ix_entity_type", "entity_type"),
         Index("ix_entity_industry_code", "industry_code"),
+        Index("ix_entity_name_sort_key", "name_sort_key"),
         Index(
             "ix_entity_name_trgm",
             "canonical_name",
@@ -147,6 +156,33 @@ class CompanyProfile(Base):
     )
 
 
+class EntitySortKeyHistory(UUIDPrimaryKeyMixin, Base):
+    """Append-only trace of sort-key changes.
+
+    Requirement: a change to the ordering key must be traceable. Without this,
+    a silently recomputed key would reorder an entire industry list with no record.
+    """
+
+    __tablename__ = "entity_sort_key_history"
+
+    entity_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("entity.id"), nullable=False
+    )
+    old_key: Mapped[str | None] = mapped_column(Text)
+    new_key: Mapped[str] = mapped_column(Text, nullable=False)
+    old_version: Mapped[str | None] = mapped_column(String(8))
+    new_version: Mapped[str] = mapped_column(String(8), nullable=False)
+    reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_entity_sort_key_history_entity", "entity_id", "created_at"),
+    )
+
+
 class IndustryTaxonomy(Base):
     __tablename__ = "industry_taxonomy"
 
@@ -161,4 +197,10 @@ class IndustryTaxonomy(Base):
     __table_args__ = (CheckConstraint("level >= 1 AND level <= 5", name="level_range"),)
 
 
-__all__ = ["CompanyProfile", "Entity", "EntityAlias", "IndustryTaxonomy"]
+__all__ = [
+    "CompanyProfile",
+    "Entity",
+    "EntityAlias",
+    "EntitySortKeyHistory",
+    "IndustryTaxonomy",
+]

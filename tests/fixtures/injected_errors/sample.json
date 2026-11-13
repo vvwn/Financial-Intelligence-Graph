@@ -1,0 +1,9 @@
+[
+  {
+    "case_id": "INJ-12",
+    "description": "verified 直接改回 candidate",
+    "expected_rule": "STA-001",
+    "severity": "critical",
+    "payload": { "from": "verified", "to": "candidate" }
+  }
+]

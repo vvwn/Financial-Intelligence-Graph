@@ -57,22 +57,37 @@
 
 ### ADR-0007 · 候选层与正式图谱双层结构（2026-11-13 决策）
 
-- **状态**：Accepted
+- **状态**：**Approved**（评审方 2026-11-13 正式裁决）
 - **决策**：`POTENTIAL_*` 四类关系（潜在受益/受损/供应商/客户）只存在于 PostgreSQL 候选层，永不投影进 Neo4j。候选层通过 `/claims`、`/relationships?status=candidate` 暴露给前端。
 - **理由**：AI 的产业链推测若进图，会沿上下游不断扩散，最终得到一张看起来完整、实际错误的图谱。
 - **后果**：✅ 图谱只含可核验事实；⚠️ 前端要看「候选网络」需另走端点，不能复用 `/graph/*`。
 
 ### ADR-0008 · PostgreSQL 为状态机唯一真源（2026-11-13 决策）
 
-- **状态**：Accepted
+- **状态**：**Approved**（评审方 2026-11-13 正式裁决，含 DISPUTED 第 7 态批准）
 - **决策**：状态变更先写 PG（含 `relationship_history`），再由投影器同步 Neo4j；不一致时以 PG 为准重建。禁止两个库同时拥有修改状态的权力。
 - **状态集合**：`candidate → pending_review → verified`，另有 `disputed / rejected / expired / revoked`。
-- **偏差**：`DISPUTED` 为决策清单外新增的第 7 态，理由见评审报告第二节。**待评审方裁决。**
+- **补充**：`DISPUTED` 第 7 态**已获批准**，语义限定为「已验证关系受到新证据挑战」，`pending_review → disputed` 非法。
 - **后果**：✅ 审计完整、可回滚；⚠️ 图有秒级延迟。
+
+### ADR-0010 · 排序键在应用层生成（locale=C 的配套）
+
+- **状态**：Approved（评审方 2026-11-13）
+- **背景**：`locale=C` 下 `ORDER BY name` 对中文是字节序；部署环境不保证 ICU 数据完整。
+- **决策**：`entity.name_sort_key` 由应用生成（`app/core/sortkey.py`）：中文转无声调拼音（词组级，多音字按上下文）、ASCII 小写、数字补零 6 位、标点转单一分隔符。原始名称字段不动。
+- **可追溯**：`name_sort_key_version` 逐行记录算法版本；变更写 `entity_sort_key_history`（旧键/新键/旧版本/新版本/原因/操作者）；批量重算用 `scripts/backfill_sort_keys.py`（默认 dry-run）。
+- **后果**：✅ 排序确定、不依赖部署环境；⚠️ 拼音算法升级需全量回填，`name_sort_key` 与原文可能短暂不一致。
+
+### ADR-0011 · 证据不可变由数据库触发器强制
+
+- **状态**：Approved（评审方 2026-11-13）
+- **决策**：`trg_evidence_immutable` 禁改正文列、禁 DELETE；唯一允许的 UPDATE 是 `verification_status`。合法修正 = 新增行 + `supersedes_id`，由 `trg_evidence_linkage` 校验「同 `origin_key` + 不早于原行」。转载用 `syndicated_from_id` 继承来源。
+- **理由**：I-5 之前只是文档承诺。只靠代码约定，任何一条裸 SQL 就能改写证据。
+- **后果**：✅ 证据链不可篡改；⚠️ 修正必须新增行，表会增长；`supersedes_id` 只能在插入时设定。
 
 ### ADR-0009 · 数据库 collation 采用 C（有意识取舍）
 
-- **状态**：Accepted（待评审）
+- **状态**：**Approved**（评审方 2026-11-13 保留 C）
 - **背景**：`postgres:16-alpine` 的 ICU 数据不保证完整，换 ICU 有 initdb 失败风险。
 - **决策**：保持 `--locale=C`，中文排序在查询层显式 `COLLATE "zh-x-icu"`，名称匹配走应用层 `normalized_name`。
 - **后果**：✅ 索引更快、行为确定；⚠️ `ORDER BY name` 非拼音序，非 ASCII 的 `lower()` 失效。`pg_trgm` 不受影响。
@@ -85,9 +100,7 @@
 |---|---|---|---|---|
 | Q-01 | 实体消歧标准：何为「同一公司」 | TASK-101/302/401 | ①股票代码唯一 ②代码+曾用名 ③代码+业务相似度 | architect + qa-audit |
 | Q-03 | 证据达标阈值（几条 C 级 = 1 条 B 级） | TASK-411/412 | 当前拍定「1×A/B 或 2×独立 C」，需真实数据校准 | architect（待 T101 数据） |
-| Q-06 | `DISPUTED` 第 7 态是否批准 | 全部关系状态逻辑 | ①保留（当前）②取消，冲突证据放 claim_evidence | **评审方** |
-| Q-07 | `locale=C` 取舍是否接受 | 中文排序与匹配 | ①保持 C（当前）②换 ICU | **评审方** |
-| Q-08 | 证据阈值是否合理 | TASK-411 | 见 Q-03 | **评审方** |
+| Q-03b | 证据阈值需用真实数据校准（当前 v1 为拍定值） | TASK-411 | 待 TASK-101 数据 | architect |
 
 ### 已关闭
 
@@ -96,6 +109,9 @@
 | Q-02 `POTENTIAL_*` 是否进图 | **不进图**（ADR-0007，2026-11-13 决策） |
 | Q-04 `as_of` 时态 | v1 不做，P4 评估 |
 | Q-05 审批人模型 | P3 前单用户，`actor` 自由字符串 |
+| Q-06 `DISPUTED` 第 7 态 | **批准**，语义限定「已验证后受挑战」 |
+| Q-07 `locale=C` | **保留**，配套 ADR-0010 应用层排序键 |
+| Q-08 证据阈值 | **保留 v1**，但阈值只决定进入核验；独立性按 `origin_key` |
 
 ---
 
